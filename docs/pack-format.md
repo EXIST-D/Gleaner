@@ -1,0 +1,69 @@
+# 素材包格式（schema_version 1）
+
+`gleaner pack` 在 `<工作区>/packs/<pack-id>/` 生成一个素材包。整个包先写进 `.tmp-<pack-id>`，完成后才改名，
+所以看到的包要么完整、要么不存在。
+
+```text
+packs/<pack-id>/
+├── manifest.json
+├── HANDOFF.md                 # 给 Agent 的导入说明与命令
+└── posts/<platform>-<post_id>/
+    ├── body.txt               # 标题、正文、标签（UTF-8）
+    └── images/01.jpg …        # 帖子图片，按原帖顺序；没有图片时不存在
+```
+
+## manifest.json
+
+```json
+{
+  "schema": "gleaner.pack",
+  "schema_version": 1,
+  "pack_id": "pack-20261027-164805-49e4",
+  "created_at": "2026-10-27T08:48:05+00:00",
+  "gleaner_version": "0.1.0",
+  "bank": "/Users/you/collected-bank",
+  "posts": [
+    {
+      "key": "xhs:aa01",
+      "platform": "xhs",
+      "platform_label": "小红书",
+      "source_url": "https://www.xiaohongshu.com/explore/aa01",
+      "source_date": "2026-10-21",
+      "published_at": "2026-10-21T00:00:00+00:00",
+      "title": "示例科技后端一面面经",
+      "kind": "image",
+      "intake": "images",
+      "dir": "posts/xhs-aa01",
+      "text_file": "posts/xhs-aa01/body.txt",
+      "images": ["posts/xhs-aa01/images/01.jpg", "posts/xhs-aa01/images/02.jpg"],
+      "label": "candidate",
+      "label_reasons": ["interview:面经", "event:一面"],
+      "keywords": ["后端 面经"],
+      "tags": ["面经", "后端"],
+      "metrics": {"liked_count": 12000, "collected_count": 356},
+      "notes": []
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `source_url` | 去掉 `xsec_token`、`utm_*` 等参数后的链接，对应 Interview Bank 元数据 `source_url` |
+| `source_date` | 北京时间的发布日期，对应 `source_date`；**不是**面试日期 `event_date` |
+| `platform_label` | 对应 Interview Bank 元数据 `platform` |
+| `kind` | `image` 图文、`video` 视频、`text` 纯文字 |
+| `intake` | `images`：用 `ingest images` 导入图片目录；`text`：用 `web-intake` 导入 `body.txt` |
+| `label` / `label_reasons` | Gleaner 初筛标签与命中理由，只作参考 |
+| `metrics` | 点赞、收藏、评论、分享数，只用于筛选和排序，不进题库 |
+| `notes` | `video-not-included`：视频未打包；`images-missing`：原帖有图但没有下载到 |
+
+## 与 Interview Bank 的对应
+
+- 图片：`ibank.py ingest images <dir>… --retention copy --bank <采集题库>`，每张图是一个来源；
+  Agent 抽题时按图片所在目录在 manifest 里找到对应帖子，填写 `platform`、`source_url`、`source_date`。
+- 正文：`ibank.py web-intake --url <source_url> --text <body.txt> --retention copy --bank <采集题库>`，
+  来源类型为 `web`，正文按段落编号。
+- 之后照常 `ingest submit`、`ingest finalize`。相同字节的来源不会重复计数，所以重复导入同一个包不会抬高频次。
+
+兼容性：新增字段不改变版本号；删除或改变字段含义时提高 `schema_version`。

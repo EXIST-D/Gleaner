@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass, field
+from importlib import resources
+from pathlib import Path
+
+from gleaner.errors import GleanerError
+
+CONFIG_NAME = "gleaner.toml"
+WORKSPACE_ENV = "GLEANER_HOME"
+MAX_NOTES_CAP = 50
+LOGIN_TYPES = ("qrcode", "phone", "cookie")
+
+
+@dataclass(frozen=True)
+class MediaCrawlerConfig:
+    home: Path | None = None
+    command: tuple[str, ...] = ("uv", "run", "main.py")
+    login_type: str = "qrcode"
+    max_notes: int = 15
+    timeout_seconds: int = 900
+    min_interval_minutes: int = 5
+
+
+@dataclass(frozen=True)
+class ScreeningConfig:
+    interview_terms: tuple[str, ...] = ()
+    event_terms: tuple[str, ...] = ()
+    promo_terms: tuple[str, ...] = ()
+    strong_promo_terms: tuple[str, ...] = ()
+    collection_terms: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class HandoffConfig:
+    bank: Path | None = None
+    ibank: Path | None = None
+    python: str = "python3"
+
+
+@dataclass(frozen=True)
+class Config:
+    workspace: Path
+    keywords: tuple[str, ...] = ()
+    mediacrawler: MediaCrawlerConfig = field(default_factory=MediaCrawlerConfig)
+    screening: ScreeningConfig = field(default_factory=ScreeningConfig)
+    handoff: HandoffConfig = field(default_factory=HandoffConfig)
+
+
+def resolve_workspace(explicit: str | None) -> Path:
+    value = explicit or os.environ.get(WORKSPACE_ENV)
+    if not value:
+        raise GleanerError(f"请用 --workspace 指定工作区目录，或设置环境变量 {WORKSPACE_ENV}")
+    return Path(value).expanduser().resolve()
+
+
+def template_text() -> str:
+    return resources.files("gleaner").joinpath("templates", CONFIG_NAME).read_text(encoding="utf-8")
+
+
+def load_config(workspace: Path) -> Config:
+    path = workspace / CONFIG_NAME
+    if not path.is_file():
+        raise GleanerError(f"工作区 {workspace} 还没有初始化，请先运行 gleaner --workspace {workspace} init")
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise GleanerError(f"{path} 不是合法的 TOML：{exc}") from exc
+    return parse_config(data, workspace)
+
+
+def parse_config(data: dict, workspace: Path) -> Config:
+    crawler = _table(data, "mediacrawler")
+    screening = _table(data, "screening")
+    handoff = _table(data, "handoff")
+
+    max_notes = _int(crawler, "max_notes", 15, "mediacrawler.max_notes")
+    if not 1 <= max_notes <= MAX_NOTES_CAP:
+        raise GleanerError(f"mediacrawler.max_notes 必须在 1 到 {MAX_NOTES_CAP} 之间")
+    login_type = str(crawler.get("login_type", "qrcode"))
+    if login_type not in LOGIN_TYPES:
+        raise GleanerError(f"mediacrawler.login_type 只能是 {' / '.join(LOGIN_TYPES)}")
+    command = tuple(_strings(crawler, "command", ["uv", "run", "main.py"], "mediacrawler.command"))
+    if not command:
+        raise GleanerError("mediacrawler.command 不能为空")
+
+    return Config(
+        workspace=workspace,
+        keywords=tuple(_keywords(_strings(data, "keywords", [], "keywords"))),
+        mediacrawler=MediaCrawlerConfig(
+            home=_path(crawler.get("home"), workspace),
+            command=command,
+            login_type=login_type,
+            max_notes=max_notes,
+            timeout_seconds=max(60, _int(crawler, "timeout_seconds", 900, "mediacrawler.timeout_seconds")),
+            min_interval_minutes=max(
+                0, _int(crawler, "min_interval_minutes", 5, "mediacrawler.min_interval_minutes")
+            ),
+        ),
+        screening=ScreeningConfig(
+            **{
+                name: tuple(_strings(screening, name, [], f"screening.{name}"))
+                for name in ScreeningConfig.__dataclass_fields__
+            }
+        ),
+        handoff=HandoffConfig(
+            bank=_path(handoff.get("bank"), workspace),
+            ibank=_path(handoff.get("ibank"), workspace),
+            python=str(handoff.get("python") or "python3"),
+        ),
+    )
+
+
+def validate_keywords(values: list[str]) -> list[str]:
+    return _keywords(values)
+
+
+def _keywords(values: list[str]) -> list[str]:
+    cleaned = [value.strip() for value in values if value.strip()]
+    for value in cleaned:
+        if "," in value or "，" in value:
+            raise GleanerError(f"关键词不能包含逗号（MediaCrawler 用逗号分隔关键词）：{value}")
+    return list(dict.fromkeys(cleaned))
+
+
+def _table(data: dict, name: str) -> dict:
+    value = data.get(name, {})
+    if not isinstance(value, dict):
+        raise GleanerError(f"[{name}] 必须是一个表")
+    return value
+
+
+def _int(table: dict, key: str, default: int, label: str) -> int:
+    value = table.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GleanerError(f"{label} 必须是整数")
+    return value
+
+
+def _strings(table: dict, key: str, default: list[str], label: str) -> list[str]:
+    value = table.get(key, default)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise GleanerError(f"{label} 必须是字符串列表")
+    return value
+
+
+def _path(value: object, workspace: Path) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else (workspace / path).resolve()

@@ -1,0 +1,34 @@
+# Gleaner 工作区配置。相对路径以本文件所在目录为基准，可以使用 ~。
+
+# 不带 --keyword 运行 `gleaner crawl xhs` 时使用的搜索关键词
+keywords = ["后端 面经", "Java 一面"]
+
+[mediacrawler]
+# 你本机的 MediaCrawler 目录（https://github.com/NanmiCoder/MediaCrawler），各自下载安装
+home = "~/MediaCrawler"
+# 在 home 目录下启动 MediaCrawler 的命令；没有 uv 时可改成 [".venv/bin/python", "main.py"]
+command = ["uv", "run", "main.py"]
+# qrcode | phone | cookie；CDP 模式连接已登录的 Chrome 时保持 qrcode 即可
+login_type = "qrcode"
+# 每次最多抓多少篇（上限 50）。MediaCrawler 许可证禁止大规模爬取，请保持小批量
+max_notes = 15
+# 单次运行超时（秒）
+timeout_seconds = 900
+# 两次抓取之间至少间隔多少分钟；--force 可跳过
+min_interval_minutes = 5
+
+[screening]
+# 追加到内置词表的词，用于规则初筛；内置词表见 src/gleaner/screening.py
+interview_terms = []
+event_terms = []
+promo_terms = []
+strong_promo_terms = []
+collection_terms = []
+
+[handoff]
+# 独立的采集题库目录（不要用个人题库）。首次使用前运行：python3 <ibank.py> init --bank <目录>
+bank = ""
+# Interview Bank 的 ibank.py 路径，用于生成素材包里的导入命令
+ibank = ""
+# 运行 ibank.py 的 Python（需要 3.10+）
+python = "python3"
