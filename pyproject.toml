@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gleaner"
+dynamic = ["version"]
+description = "拾穗：从小红书等平台采集真实面经，筛选后打包交给 Interview Bank 入库"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
+authors = [{ name = "EXIST-D" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Natural Language :: Chinese (Simplified)",
+]
+
+[project.scripts]
+gleaner = "gleaner.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "gleaner.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gleaner = ["templates/*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# `ruff format` keeps code within line-length; long user-facing strings and SQL stay unsplit.
+ignore = ["E501"]

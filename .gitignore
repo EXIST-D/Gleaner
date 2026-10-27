@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.ruff_cache/
+
+# Runtime data: crawled posts, images, packs and the local database never belong in git
+workspace/
+gleaner-data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+runs/
+packs/
+
+# Third-party crawler checkout and its login state
+MediaCrawler/
+browser_data/
+*_user_data_dir/
+.env
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
