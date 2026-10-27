@@ -6,7 +6,7 @@ from gleaner.errors import GleanerError
 from gleaner.packer import PACK_SCHEMA, build_pack
 from gleaner.pipeline import import_export
 from gleaner.store import Store
-from tests.support import FAKE_JPEG, NOW, WorkspaceTestCase, make_config, write_export
+from tests.support import FAKE_JPEG, INTERVIEW_NOTE, NOW, WorkspaceTestCase, make_config, write_export
 
 
 class PackerTest(WorkspaceTestCase):
@@ -81,6 +81,37 @@ class PackerTest(WorkspaceTestCase):
         self.pack()
         with Store.open(self.workspace) as store, self.assertRaisesRegex(GleanerError, "没有可以打包"):
             build_pack(store, self.config, now=NOW)
+
+    def test_posts_whose_body_lists_the_questions_skip_their_images(self):
+        listed = {
+            **INTERVIEW_NOTE,
+            "note_id": "ee05",
+            "title": "示例科技 AI 应用二面",
+            "desc": "1. 自我介绍\n2. Agent 采用什么架构？\n3. 如何评估 Skill 的效果？\n4. 手写三数之和",
+        }
+        caption_only = {**INTERVIEW_NOTE, "note_id": "ff06", "title": "示例科技三面", "desc": "#面经 #Agent"}
+        self.source = write_export(
+            self.workspace / "external2", [listed, caption_only], images={"ee05": 3, "ff06": 2}
+        )
+        result, manifest, _ = self.pack()
+        entries = {entry["key"]: entry for entry in manifest["posts"]}
+
+        text_entry = entries["xhs:ee05"]
+        self.assertEqual(text_entry["intake"], "text")
+        self.assertEqual(text_entry["body_questions"], 3)
+        self.assertEqual(text_entry["images"], [])
+        self.assertEqual(text_entry["skipped_images"], 3)
+        self.assertIn("images-not-imported", text_entry["notes"])
+        self.assertFalse((result.path / text_entry["dir"] / "images").exists())
+
+        image_entry = entries["xhs:ff06"]
+        self.assertEqual(image_entry["intake"], "images")
+        self.assertEqual(len(image_entry["images"]), 2)
+        self.assertEqual(image_entry["skipped_images"], 0)
+
+        handoff = (result.path / "HANDOFF.md").read_text(encoding="utf-8")
+        self.assertIn("看图导入 1 篇，读正文导入 1 篇", handoff)
+        self.assertIn("使用心得、学习方式", handoff)
 
     def test_limit(self):
         result, _, _ = self.pack(limit=1)

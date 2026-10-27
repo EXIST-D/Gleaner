@@ -253,7 +253,7 @@ def cmd_pack(args) -> int:
             store, config, now=utc_now(), labels=args.label, keys=args.key, limit=args.limit, bank=bank
         )
     text = [
-        f"素材包 {result.pack_id}：{result.posts} 篇（图文 {result.image_posts}，纯文字 {result.text_posts}）",
+        f"素材包 {result.pack_id}：{result.posts} 篇（看图导入 {result.image_posts}，读正文导入 {result.text_posts}）",
         f"位置：{result.path}",
         f"把 {result.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
     ]

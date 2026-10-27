@@ -54,9 +54,15 @@ packs/<pack-id>/
 | `platform_label` | 对应 Interview Bank 元数据 `platform` |
 | `kind` | `image` 图文、`video` 视频、`text` 纯文字 |
 | `intake` | `images`：用 `ingest images` 导入图片目录；`text`：用 `web-intake` 导入 `body.txt` |
+| `body_questions` | 正文里像题目的行数：带编号或问号、含提问线索词、去掉编号后至少 6 个字 |
+| `skipped_images` | 正文已列出题目、改读正文时没有打包的图片张数（原图仍在工作区 `runs/` 里） |
 | `label` / `label_reasons` | Gleaner 初筛标签与命中理由，只作参考 |
 | `metrics` | 点赞、收藏、评论、分享数，只用于筛选和排序，不进题库 |
-| `notes` | `video-not-included`：视频未打包；`images-missing`：原帖有图但没有下载到 |
+| `notes` | `video-not-included`：视频未打包；`images-missing`：原帖有图但没有下载到；`images-not-imported`：正文已列出题目，图片未打包 |
+
+`intake` 的选择：正文列出至少 3 道题、并且不少于图片张数时读正文，否则有图就看图。
+小红书很多面经把同一份题单排版成几张图，正文里也贴一遍；读正文不用看图，能省下大部分额度。
+图片多、正文题少的帖子仍然看图，判断出错时只会多看几张图，不会漏题。
 
 ## 与 Interview Bank 的对应
 
