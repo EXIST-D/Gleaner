@@ -19,8 +19,8 @@ from gleaner.config import (
 from gleaner.errors import GleanerError
 from gleaner.models import LABEL_TITLES, LABELS, PostRecord
 from gleaner.packer import DEFAULT_LIMIT, build_pack
-from gleaner.pipeline import crawl_xhs, import_export, screen
-from gleaner.sources.mediacrawler import MediaCrawlerDriver
+from gleaner.pipeline import crawl_xhs, import_export, planned_notes, screen
+from gleaner.sources.mediacrawler import SEARCH_PAGE_SIZE, MediaCrawlerDriver
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
 
@@ -69,7 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     crawl.add_argument("platform", choices=["xhs"], help="平台（目前支持 xhs 小红书）")
     crawl.add_argument("--keyword", action="append", default=[], help="搜索关键词，可重复；默认用配置里的")
     crawl.add_argument("--url", action="append", default=[], help="只抓这些帖子（链接或 ID），可重复")
-    crawl.add_argument("--max-notes", type=int, help=f"本次最多抓多少篇（1–{MAX_NOTES_CAP}）")
+    crawl.add_argument(
+        "--max-notes",
+        type=int,
+        help=f"搜索时每个关键词抓多少篇（1–{MAX_NOTES_CAP}，按每页 20 篇取整，最少一页）",
+    )
     crawl.add_argument("--force", action="store_true", help="忽略两次抓取之间的最小间隔")
     crawl.add_argument("--quiet", action="store_true", help="不在终端显示 MediaCrawler 的输出")
 
@@ -165,6 +169,12 @@ def cmd_crawl(args) -> int:
     keywords = validate_keywords(args.keyword) or list(config.keywords)
     targets = [value.strip() for value in args.url if value.strip()]
     driver = MediaCrawlerDriver(config.mediacrawler, echo=not (args.quiet or args.json))
+    if not args.json and not targets:
+        planned = planned_notes(config, keywords=keywords, targets=targets, max_notes=args.max_notes)
+        print(
+            f"小红书搜索按页抓取（每页 {SEARCH_PAGE_SIZE} 篇）：{len(keywords)} 个关键词，本次最多约 {planned} 篇",
+            file=sys.stderr,
+        )
     with Store.open(config.workspace) as store:
         outcome = crawl_xhs(
             store,

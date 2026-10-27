@@ -2,7 +2,7 @@ import unittest
 from datetime import timedelta
 
 from gleaner.errors import GleanerError
-from gleaner.pipeline import SOURCE_XHS, crawl_xhs, import_export, screen
+from gleaner.pipeline import SOURCE_XHS, crawl_xhs, import_export, planned_notes, screen
 from gleaner.sources.base import FetchResult
 from gleaner.store import Store
 from tests.support import NOW, PROMO_NOTE, WorkspaceTestCase, make_config, write_export
@@ -50,6 +50,12 @@ class PipelineTest(WorkspaceTestCase):
             self.assertEqual(run.counts["new"], 4)
             checkpoint = {c["keyword"]: c["latest_published_at"] for c in store.checkpoints(SOURCE_XHS)}
             self.assertEqual(checkpoint["后端 面经"], "2026-10-24T00:00:00+00:00")
+
+    def test_run_records_the_real_page_based_plan(self):
+        with Store.open(self.workspace, create=True) as store:
+            self.crawl(store, FakeDriver(), keywords=("后端 面经", "Java 一面"))
+            self.assertEqual(store.runs()[0].params["planned_notes"], 40)
+        self.assertEqual(planned_notes(self.config, keywords=[], targets=["a", "b"], max_notes=None), 2)
 
     def test_second_crawl_counts_known_posts_as_unchanged(self):
         with Store.open(self.workspace, create=True) as store:

@@ -9,7 +9,7 @@ from gleaner.adapters.xhs import ParseReport, copy_export, iter_posts
 from gleaner.config import Config
 from gleaner.errors import GleanerError
 from gleaner.screening import Screener
-from gleaner.sources.mediacrawler import MediaCrawlerDriver
+from gleaner.sources.mediacrawler import MediaCrawlerDriver, search_notes_per_keyword
 from gleaner.store import Store
 from gleaner.timeutil import iso, new_id, parse_iso
 
@@ -56,6 +56,13 @@ class CrawlOutcome:
         }
 
 
+def planned_notes(config: Config, *, keywords: list[str], targets: list[str], max_notes: int | None) -> int:
+    """Upper bound of notes one crawl requests from the platform."""
+    if targets:
+        return len(targets)
+    return search_notes_per_keyword(max_notes or config.mediacrawler.max_notes) * len(keywords)
+
+
 def run_dirs(config: Config, run_id: str) -> tuple[Path, Path]:
     run_dir = config.workspace / "runs" / run_id
     return run_dir, run_dir / "raw"
@@ -83,6 +90,7 @@ def crawl_xhs(
         "keywords": keywords,
         "targets": targets,
         "max_notes": max_notes or config.mediacrawler.max_notes,
+        "planned_notes": planned_notes(config, keywords=keywords, targets=targets, max_notes=max_notes),
     }
     store.begin_run(
         run_id, source=SOURCE_XHS, mode=mode, params=params, output_dir=_rel(raw_dir, config), now=iso(now)

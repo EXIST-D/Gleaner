@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 
 from gleaner.config import MediaCrawlerConfig
-from gleaner.sources.mediacrawler import LOG_NAME, MediaCrawlerDriver, build_command, diagnose
+from gleaner.sources.mediacrawler import (
+    LOG_NAME,
+    MediaCrawlerDriver,
+    build_command,
+    diagnose,
+    search_notes_per_keyword,
+)
 from tests.support import WorkspaceTestCase, write_export
 
 
@@ -28,6 +34,12 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(pairs["--get_media"], "yes")
         self.assertEqual(pairs["--crawler_max_notes_count"], "15")
         self.assertEqual(pairs["--max_concurrency_num"], "1")
+
+    def test_search_fetches_whole_pages(self):
+        self.assertEqual(search_notes_per_keyword(5), 20)
+        self.assertEqual(search_notes_per_keyword(20), 20)
+        self.assertEqual(search_notes_per_keyword(39), 20)
+        self.assertEqual(search_notes_per_keyword(40), 40)
 
     def test_detail_uses_specified_ids(self):
         command = build_command(

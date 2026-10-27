@@ -43,7 +43,7 @@ class ConfigTest(unittest.TestCase):
         import tomllib
 
         config = parse_config(tomllib.loads(template_text()), Path("/tmp/ws"))
-        self.assertEqual(config.mediacrawler.max_notes, 15)
+        self.assertEqual(config.mediacrawler.max_notes, 20)
         self.assertEqual(config.mediacrawler.command, ("uv", "run", "main.py"))
         self.assertIsNone(config.handoff.bank)
 

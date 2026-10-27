@@ -10,7 +10,8 @@ from gleaner.errors import GleanerError
 
 CONFIG_NAME = "gleaner.toml"
 WORKSPACE_ENV = "GLEANER_HOME"
-MAX_NOTES_CAP = 50
+MAX_NOTES_CAP = 40
+"""Two search pages of 20 notes per keyword."""
 LOGIN_TYPES = ("qrcode", "phone", "cookie")
 
 
@@ -19,7 +20,7 @@ class MediaCrawlerConfig:
     home: Path | None = None
     command: tuple[str, ...] = ("uv", "run", "main.py")
     login_type: str = "qrcode"
-    max_notes: int = 15
+    max_notes: int = 20
     timeout_seconds: int = 900
     min_interval_minutes: int = 5
 
@@ -76,7 +77,7 @@ def parse_config(data: dict, workspace: Path) -> Config:
     screening = _table(data, "screening")
     handoff = _table(data, "handoff")
 
-    max_notes = _int(crawler, "max_notes", 15, "mediacrawler.max_notes")
+    max_notes = _int(crawler, "max_notes", 20, "mediacrawler.max_notes")
     if not 1 <= max_notes <= MAX_NOTES_CAP:
         raise GleanerError(f"mediacrawler.max_notes 必须在 1 到 {MAX_NOTES_CAP} 之间")
     login_type = str(crawler.get("login_type", "qrcode"))

@@ -44,6 +44,12 @@ class ScreenerTest(unittest.TestCase):
     def test_question_collection_without_an_interview_event(self):
         self.assertEqual(self.label("Redis 高频题合集", "八股必背", images=2), "collection")
 
+    def test_interviewer_mentions_are_not_an_interview_event(self):
+        self.assertEqual(
+            self.label("AI 全栈工程师高频考点汇总", "面试官最爱问的八股", images=4), "collection"
+        )
+        self.assertEqual(self.label("AI Agent 全套 50 道面试题", "面试必看", images=4), "collection")
+
     def test_collection_with_an_interview_event_stays_candidate(self):
         self.assertEqual(self.label("三场一面汇总", "示例科技一面问了"), "candidate")
 

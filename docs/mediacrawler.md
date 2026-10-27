@@ -46,7 +46,7 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 | `home` | `~/MediaCrawler` | MediaCrawler 根目录（有 `main.py`） |
 | `command` | `["uv", "run", "main.py"]` | 在 `home` 下执行的命令；不用 uv 时改成 `[".venv/bin/python", "main.py"]` |
 | `login_type` | `qrcode` | `qrcode` / `phone` / `cookie`；CDP 模式复用浏览器的登录状态，一般保持 `qrcode` |
-| `max_notes` | 15 | 每次最多抓多少篇，上限 50 |
+| `max_notes` | 20 | 搜索时每个关键词抓多少篇。小红书按页返回、每页 20 篇，MediaCrawler 会把小于 20 的值提高到 20，其余按整页向下取整；上限 40（两页） |
 | `timeout_seconds` | 900 | 单次运行超时 |
 | `min_interval_minutes` | 5 | 两次抓取的最小间隔，`--force` 跳过 |
 

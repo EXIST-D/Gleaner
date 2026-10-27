@@ -6,6 +6,8 @@ own checkout. Verified against NanmiCoder/MediaCrawler main as of 2026-10:
 - `main.py --platform xhs --type search|detail` with `--keywords` or `--specified_id` (comma separated).
 - `--save_data_option jsonl --save_data_path <dir>` writes `<dir>/xhs/jsonl/<type>_contents_<date>.jsonl`.
 - `--get_media yes` downloads note images to `<dir>/xhs/media/<note_id>/001.jpg …` (videos: cover + video).
+- Search fetches whole result pages of 20 notes per keyword and raises a smaller
+  `--crawler_max_notes_count` to 20 (`media_platform/xhs/core.py: search`).
 
 If MediaCrawler changes its command line or output layout, this module and `adapters/xhs.py` change.
 """
@@ -27,6 +29,13 @@ from gleaner.sources.base import FetchResult
 
 LOG_NAME = "mediacrawler.log"
 MODES = ("search", "detail")
+SEARCH_PAGE_SIZE = 20
+
+
+def search_notes_per_keyword(max_notes: int) -> int:
+    """How many notes MediaCrawler really fetches per keyword: whole pages, at least one."""
+    return max(SEARCH_PAGE_SIZE, max_notes // SEARCH_PAGE_SIZE * SEARCH_PAGE_SIZE)
+
 
 Runner = Callable[[Sequence[str], Path, int, Path], int]
 """(command, working directory, timeout in seconds, log file) -> exit code; raises TimeoutError."""

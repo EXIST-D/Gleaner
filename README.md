@@ -54,7 +54,7 @@ python3 -B <Interview-bank>/skills/interview-bank/scripts/ibank.py init --bank ~
 # 4. 检查环境
 gleaner doctor
 
-# 5. 小批量抓取（默认每次最多 15 篇，两次至少间隔 5 分钟）
+# 5. 小批量抓取（搜索按页返回，每个关键词一页 20 篇；两次至少间隔 5 分钟）
 gleaner crawl xhs --keyword "后端 面经"
 gleaner crawl xhs --url "https://www.xiaohongshu.com/explore/<帖子ID>?xsec_token=..."
 
@@ -100,8 +100,8 @@ gleaner pack --limit 20
 
 ## 使用边界
 
-- **个人学习、非商业**。MediaCrawler 使用“非商业学习许可证”，禁止大规模爬取。Gleaner 默认每次最多 15 篇、
-  上限 50 篇，并发 1，不抓评论，两次抓取之间至少间隔 5 分钟。
+- **个人学习、非商业**。MediaCrawler 使用“非商业学习许可证”，禁止大规模爬取。小红书搜索按页返回（每页 20 篇），
+  Gleaner 默认每个关键词只抓一页、最多两页，并发 1，不抓评论，两次抓取之间至少间隔 5 分钟。
 - **MediaCrawler 不随本仓库分发**。它的代码不在这里，每个使用者各自下载安装，各自遵守它的许可证。
 - **数据留在本机**。工作区目录、登录状态和 MediaCrawler 目录都已加入 `.gitignore`。帖子和图片的版权属于原作者，
   不要公开转载原文；交给题库的是题目、来源链接和必要的短摘录。

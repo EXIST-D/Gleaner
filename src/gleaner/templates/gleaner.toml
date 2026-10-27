@@ -10,8 +10,9 @@ home = "~/MediaCrawler"
 command = ["uv", "run", "main.py"]
 # qrcode | phone | cookie；CDP 模式连接已登录的 Chrome 时保持 qrcode 即可
 login_type = "qrcode"
-# 每次最多抓多少篇（上限 50）。MediaCrawler 许可证禁止大规模爬取，请保持小批量
-max_notes = 15
+# 搜索时每个关键词抓多少篇。小红书搜索按页返回，每页 20 篇：不足 20 按一页算，
+# 其余按整页向下取整，上限 40（两页）。MediaCrawler 许可证禁止大规模爬取，请保持小批量
+max_notes = 20
 # 单次运行超时（秒）
 timeout_seconds = 900
 # 两次抓取之间至少间隔多少分钟；--force 可跳过
