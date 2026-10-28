@@ -39,31 +39,34 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake →
 ## 快速开始
 
 ```bash
-# 1. 安装 Gleaner（在本仓库目录；python3.12 换成你机器上任意 3.11+ 的解释器）
-python3.12 -m venv .venv && .venv/bin/pip install -e .
+# 1. 安装 Gleaner（在本仓库目录；需要 Python 3.11+，用 uv 时它会自动准备）
+uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python -e .
 export PATH="$PWD/.venv/bin:$PATH"
 
-# 2. 创建工作区（数据都在这里，不在仓库里）
-export GLEANER_HOME=~/Gleaner-data
+# 2. 把 MediaCrawler 放进仓库目录（已被 git 忽略），见 docs/mediacrawler.md
+git clone https://github.com/NanmiCoder/MediaCrawler.git MediaCrawler && (cd MediaCrawler && uv sync)
+
+# 3. 创建工作区（仓库下的 workspace/，已被 git 忽略）
+export GLEANER_HOME="$PWD/workspace"
 gleaner init
-#    编辑 ~/Gleaner-data/gleaner.toml：mediacrawler.home、handoff.bank、handoff.ibank
+#    默认配置已指向 ../MediaCrawler 和 ../collected-bank，只需填写 handoff.ibank
 
-# 3. 新建独立的采集题库（只需一次）
-python3 -B <Interview-bank>/skills/interview-bank/scripts/ibank.py init --bank ~/collected-bank
+# 4. 新建独立的采集题库（只需一次）
+python3 -B <Interview-bank>/skills/interview-bank/scripts/ibank.py init --bank collected-bank
 
-# 4. 检查环境
+# 5. 检查环境
 gleaner doctor
 
-# 5. 小批量抓取（搜索按页返回，每个关键词一页 20 篇；两次至少间隔 5 分钟）
+# 6. 小批量抓取（搜索按页返回，每个关键词一页 20 篇；两次至少间隔 5 分钟）
 gleaner crawl xhs --keyword "后端 面经"
 gleaner crawl xhs --url "https://www.xiaohongshu.com/explore/<帖子ID>?xsec_token=..."
 
-# 6. 看初筛结果，必要时人工改标签
+# 7. 看初筛结果，必要时人工改标签
 gleaner list --label candidate
 gleaner show xhs:<帖子ID>
 gleaner label xhs:<帖子ID> promo --reason "结尾在卖课"
 
-# 7. 打包，把 HANDOFF.md 交给装了 interview-bank 的 Agent
+# 8. 打包，把 HANDOFF.md 交给装了 interview-bank 的 Agent
 gleaner pack --limit 20
 ```
 
@@ -86,24 +89,33 @@ gleaner pack --limit 20
 所有命令都支持 `--json`。工作区用 `--workspace` 或环境变量 `GLEANER_HOME` 指定。
 退出码：0 成功，1 出错，3 抓取降级（例如登录过期，已产出的部分仍会导入）。
 
-## 工作区结构
+## 目录结构
+
+所有运行数据都放在仓库目录里，并且全部被 git 忽略：
 
 ```text
-<GLEANER_HOME>/
-├── gleaner.toml          # 配置
-├── gleaner.db            # 帖子、标签、抓取记录、关键词进度
-├── runs/<run-id>/
-│   ├── mediacrawler.log  # MediaCrawler 的完整输出
-│   └── raw/xhs/          # MediaCrawler 原始导出（jsonl + media/）
-└── packs/<pack-id>/      # 交给 Interview Bank 的素材包，格式见 docs/pack-format.md
+Gleaner/
+├── src/ tests/ docs/      # 代码与文档（进 git）
+├── MediaCrawler/          # 你自己下载的 MediaCrawler，含 browser_data/ 登录状态
+├── collected-bank/        # 独立的采集题库（Interview Bank 格式）
+└── workspace/             # Gleaner 工作区（GLEANER_HOME）
+    ├── gleaner.toml       # 配置；路径相对本文件，默认指向 ../MediaCrawler 和 ../collected-bank
+    ├── gleaner.db         # 帖子、标签、抓取记录、关键词进度
+    ├── runs/<run-id>/
+    │   ├── mediacrawler.log   # MediaCrawler 的完整输出
+    │   └── raw/xhs/           # MediaCrawler 原始导出（jsonl + media/）
+    └── packs/<pack-id>/   # 交给 Interview Bank 的素材包，格式见 docs/pack-format.md
 ```
+
+配置里用相对路径，整个 `Gleaner/` 目录挪到别处也不用改。挪动后要重建两个虚拟环境：
+仓库的 `.venv` 和 `MediaCrawler/.venv`，因为里面写着绝对路径；`uv` 会从缓存重装，不用重新下载。
 
 ## 使用边界
 
 - **个人学习、非商业**。MediaCrawler 使用“非商业学习许可证”，禁止大规模爬取。小红书搜索按页返回（每页 20 篇），
   Gleaner 默认每个关键词只抓一页、最多两页，并发 1，不抓评论，两次抓取之间至少间隔 5 分钟。
 - **MediaCrawler 不随本仓库分发**。它的代码不在这里，每个使用者各自下载安装，各自遵守它的许可证。
-- **数据留在本机**。工作区目录、登录状态和 MediaCrawler 目录都已加入 `.gitignore`。帖子和图片的版权属于原作者，
+- **数据留在本机**。工作区、采集题库、MediaCrawler 目录和登录状态都已加入 `.gitignore`。帖子和图片的版权属于原作者，
   不要公开转载原文；交给题库的是题目、来源链接和必要的短摘录。
 - 素材包里的链接已经去掉 `xsec_token` 等会话参数；带参数的原始链接只保存在本机数据库里。
 

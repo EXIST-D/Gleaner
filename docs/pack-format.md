@@ -21,7 +21,7 @@ packs/<pack-id>/
   "pack_id": "pack-20261027-164805-49e4",
   "created_at": "2026-10-27T08:48:05+00:00",
   "gleaner_version": "0.1.0",
-  "bank": "/Users/you/collected-bank",
+  "bank": "/Users/you/Gleaner/collected-bank",
   "posts": [
     {
       "key": "xhs:aa01",

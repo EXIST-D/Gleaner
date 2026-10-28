@@ -4,8 +4,9 @@
 keywords = ["后端 面经", "Java 一面"]
 
 [mediacrawler]
-# 你本机的 MediaCrawler 目录（https://github.com/NanmiCoder/MediaCrawler），各自下载安装
-home = "~/MediaCrawler"
+# 你本机的 MediaCrawler 目录（https://github.com/NanmiCoder/MediaCrawler），各自下载安装。
+# 默认对应仓库根目录下的 MediaCrawler/（工作区是仓库下的 workspace/ 时；该目录已被 git 忽略）
+home = "../MediaCrawler"
 # 在 home 目录下启动 MediaCrawler 的命令；没有 uv 时可改成 [".venv/bin/python", "main.py"]
 command = ["uv", "run", "main.py"]
 # qrcode | phone | cookie；CDP 模式连接已登录的 Chrome 时保持 qrcode 即可
@@ -28,7 +29,8 @@ collection_terms = []
 
 [handoff]
 # 独立的采集题库目录（不要用个人题库）。首次使用前运行：python3 <ibank.py> init --bank <目录>
-bank = ""
+# 默认对应仓库根目录下的 collected-bank/（已被 git 忽略）
+bank = "../collected-bank"
 # Interview Bank 的 ibank.py 路径，用于生成素材包里的导入命令
 ibank = ""
 # 运行 ibank.py 的 Python（需要 3.10+）

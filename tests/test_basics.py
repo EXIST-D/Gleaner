@@ -45,7 +45,9 @@ class ConfigTest(unittest.TestCase):
         config = parse_config(tomllib.loads(template_text()), Path("/tmp/ws"))
         self.assertEqual(config.mediacrawler.max_notes, 20)
         self.assertEqual(config.mediacrawler.command, ("uv", "run", "main.py"))
-        self.assertIsNone(config.handoff.bank)
+        self.assertEqual(config.mediacrawler.home, Path("/tmp/MediaCrawler").resolve())
+        self.assertEqual(config.handoff.bank, Path("/tmp/collected-bank").resolve())
+        self.assertIsNone(config.handoff.ibank)
 
     def test_relative_paths_resolve_against_workspace(self):
         config = parse_config({"handoff": {"bank": "../bank"}}, Path("/tmp/ws"))

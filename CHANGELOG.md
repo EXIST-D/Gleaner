@@ -6,6 +6,9 @@
   manifest 记录 `body_questions` 与 `skipped_images`。备考总结、讲解小标题这类带编号或问号的非题目行不计入。
 - `HANDOFF.md`：明确不收没有技术考点的问题，包括自我介绍、经历确认、实习时长和到岗时间、反问环节，
   以及使用心得、学习方式、自我评价。
+- 目录布局：MediaCrawler、采集题库和工作区默认都放在仓库目录下（`MediaCrawler/`、`collected-bank/`、
+  `workspace/`，均被 git 忽略）；新工作区的配置用相对路径指向它们，整个目录挪动后不用改配置。
+- 文档补充推荐的独立窗口扫码登录方式（`CDP_CONNECT_EXISTING = False`）。
 
 ## 0.1.0 — 2026-10-27
 

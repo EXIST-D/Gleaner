@@ -60,7 +60,7 @@ class CliTest(WorkspaceTestCase):
     def test_crawl_without_mediacrawler_is_degraded(self):
         self.call("init")
         config = self.workspace / "gleaner.toml"
-        text = config.read_text(encoding="utf-8").replace('"~/MediaCrawler"', '"no-such-mediacrawler"')
+        text = config.read_text(encoding="utf-8").replace('"../MediaCrawler"', '"no-such-mediacrawler"')
         config.write_text(text, encoding="utf-8")
         code, out, _ = self.call("crawl", "xhs", "--keyword", "后端 面经", "--json")
         self.assertEqual(code, EXIT_DEGRADED)

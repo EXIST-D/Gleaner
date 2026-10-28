@@ -8,9 +8,10 @@ dist/
 venv/
 .ruff_cache/
 
-# Runtime data: crawled posts, images, packs and the local database never belong in git
+# Runtime data: crawled posts, images, packs, the collected bank and the local database never belong in git
 workspace/
 gleaner-data/
+collected-bank/
 *.db
 *.db-journal
 *.db-wal
