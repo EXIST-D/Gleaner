@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from gleaner import __version__
+from gleaner.checks import environment_checks
 from gleaner.config import (
     CONFIG_NAME,
     MAX_NOTES_CAP,
@@ -104,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pack.add_argument("--bank", type=Path, help="采集题库目录；默认用配置里的 handoff.bank")
 
+    web = command("web", cmd_web, "打开本机网页控制台：概览、可视化抓取、看帖改标签、打包")
+    web.add_argument("--port", type=int, default=8765, help="端口，默认 8765；只监听 127.0.0.1")
+    web.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+
     command("stats", cmd_stats, "统计帖子、标签和抓取记录")
     runs = command("runs", cmd_runs, "最近的抓取记录")
     runs.add_argument("--limit", type=int, default=10)
@@ -136,28 +140,9 @@ def cmd_init(args) -> int:
 
 def cmd_doctor(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
-    checks = []
-    problems = MediaCrawlerDriver(config.mediacrawler).problems()
-    checks.append(("mediacrawler", not problems, "；".join(problems) or str(config.mediacrawler.home)))
-    checks.append(("keywords", bool(config.keywords), "、".join(config.keywords) or "没有默认关键词"))
-    ibank = config.handoff.ibank
-    checks.append(
-        ("ibank", bool(ibank and ibank.is_file()), str(ibank) if ibank else "没有配置 handoff.ibank")
-    )
-    bank = config.handoff.bank
-    bank_ok = bool(bank and (bank / "manifest.json").is_file())
-    bank_text = str(bank) if bank else "没有配置 handoff.bank"
-    if bank and not bank_ok:
-        bank_text += "（还不是题库，先运行 ibank.py init --bank）"
-    checks.append(("bank", bank_ok, bank_text))
-    python_ok = shutil.which(config.handoff.python) is not None
-    checks.append(("python", python_ok, config.handoff.python))
-
-    data = {
-        "ok": all(ok for _, ok, _ in checks),
-        "checks": [{"name": n, "ok": ok, "detail": d} for n, ok, d in checks],
-    }
-    text = [f"{'✓' if ok else '✗'} {name}: {detail}" for name, ok, detail in checks]
+    checks = environment_checks(config)
+    data = {"ok": all(check.ok for check in checks), "checks": [check.as_dict() for check in checks]}
+    text = [f"{'✓' if check.ok else '✗'} {check.name}: {check.detail}" for check in checks]
     _emit(args, data, text)
     return 0 if data["ok"] else 1
 
@@ -258,6 +243,15 @@ def cmd_pack(args) -> int:
         f"把 {result.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
     ]
     return _emit(args, {"ok": True, **result.as_dict()}, text)
+
+
+def cmd_web(args) -> int:
+    from gleaner.web.server import serve
+
+    workspace = resolve_workspace(args.workspace)
+    load_config(workspace)
+    serve(workspace, port=args.port, open_browser=not args.no_open)
+    return 0
 
 
 def cmd_stats(args) -> int:

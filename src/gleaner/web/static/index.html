@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="gleaner-token" content="__GLEANER_TOKEN__">
+  <title>拾穗 · Gleaner</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#overview">
+        <img src="/static/icon.svg" alt="" width="28" height="28">
+        <span class="brand-name">拾穗</span>
+        <span class="brand-sub">Gleaner</span>
+      </a>
+      <nav class="tabs" aria-label="主导航">
+        <a href="#overview" data-view="overview">概览</a>
+        <a href="#crawl" data-view="crawl">抓取<span class="live-dot" id="live-dot" hidden></span></a>
+        <a href="#posts" data-view="posts">帖子</a>
+        <a href="#packs" data-view="packs">素材包</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    <section id="view-overview" class="view" hidden></section>
+    <section id="view-crawl" class="view" hidden></section>
+    <section id="view-posts" class="view" hidden></section>
+    <section id="view-packs" class="view" hidden></section>
+  </main>
+
+  <div class="selection-bar" id="selection-bar" hidden>
+    <span id="selection-count"></span>
+    <button class="btn ghost" data-action="clear-selection">清除</button>
+    <button class="btn primary" data-action="pack-selected">打包所选</button>
+  </div>
+
+  <div class="overlay" id="overlay" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2 id="drawer-title"></h2>
+      <button class="icon-btn" data-action="close-drawer" aria-label="关闭">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

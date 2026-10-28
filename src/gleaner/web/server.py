@@ -1,0 +1,435 @@
+"""A loopback-only HTTP server for the web console, built on the standard library."""
+
+from __future__ import annotations
+
+import json
+import mimetypes
+import re
+import secrets
+import webbrowser
+from dataclasses import dataclass, field
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import resources
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from gleaner import __version__
+from gleaner.bodytext import choose_intake, listed_questions
+from gleaner.checks import environment_checks
+from gleaner.config import MAX_NOTES_CAP, load_config
+from gleaner.errors import GleanerError
+from gleaner.models import LABEL_TITLES, LABELS, PostRecord
+from gleaner.packer import build_pack
+from gleaner.pipeline import seconds_until_next_crawl
+from gleaner.sources.mediacrawler import SEARCH_PAGE_SIZE
+from gleaner.store import Store
+from gleaner.timeutil import china_date, iso, utc_now
+from gleaner.web.jobs import CrawlJobs
+from gleaner.web.progress import STEP_TITLES, STEPS
+
+HOST = "127.0.0.1"
+DEFAULT_PORT = 8765
+MAX_BODY_BYTES = 256 * 1024
+MEDIA_SUFFIXES = {".webp", ".jpg", ".jpeg", ".png", ".gif"}
+PACK_ID = re.compile(r"^pack-\d{8}-\d{6}-[0-9a-f]{4}$")
+STATIC_FILES = {"index.html", "app.css", "app.js", "icon.svg"}
+TOKEN_PLACEHOLDER = "__GLEANER_TOKEN__"
+CSP = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+
+@dataclass
+class Response:
+    status: int
+    body: bytes
+    content_type: str = "application/json; charset=utf-8"
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+def json_response(data: dict, status: int = 200) -> Response:
+    return Response(status, json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def error_response(message: str, status: int = 400) -> Response:
+    return json_response({"ok": False, "error": message}, status)
+
+
+class WebApp:
+    """Request handling without sockets, so tests can call it directly or through a real server."""
+
+    def __init__(
+        self, workspace: Path, *, jobs: CrawlJobs | None = None, token: str | None = None, port: int = 0
+    ):
+        self.workspace = workspace
+        self.jobs = jobs or CrawlJobs(workspace)
+        self.token = token or secrets.token_urlsafe(24)
+        self.port = port
+        load_config(workspace)
+
+    def allowed_hosts(self) -> set[str]:
+        return {f"{HOST}:{self.port}", f"localhost:{self.port}"}
+
+    def handle(self, method: str, target: str, headers: dict[str, str], body: bytes) -> Response:
+        if headers.get("host", "").lower() not in self.allowed_hosts():
+            return error_response("只接受来自本机地址的访问", HTTPStatus.FORBIDDEN)
+        parts = urlsplit(target)
+        path, query = parts.path, {key: values[-1] for key, values in parse_qs(parts.query).items()}
+        try:
+            if method == "GET":
+                return self._get(path, query)
+            if method == "POST":
+                if not secrets.compare_digest(headers.get("x-gleaner-token", ""), self.token):
+                    return error_response("页面令牌无效，请刷新页面", HTTPStatus.FORBIDDEN)
+                payload = json.loads(body.decode("utf-8") or "{}") if body else {}
+                if not isinstance(payload, dict):
+                    return error_response("请求内容必须是 JSON 对象")
+                return self._post(path, payload)
+            return error_response("不支持的请求方法", HTTPStatus.METHOD_NOT_ALLOWED)
+        except GleanerError as exc:
+            return error_response(str(exc))
+        except (ValueError, UnicodeDecodeError) as exc:
+            return error_response(f"请求格式不正确：{exc}")
+
+    # GET
+
+    def _get(self, path: str, query: dict[str, str]) -> Response:
+        if path in ("/", "/index.html"):
+            html = _static("index.html").decode("utf-8").replace(TOKEN_PLACEHOLDER, self.token)
+            return Response(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        if path.startswith("/static/"):
+            name = path.removeprefix("/static/")
+            if name not in STATIC_FILES:
+                return error_response("找不到文件", HTTPStatus.NOT_FOUND)
+            content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or name.endswith(".js"):
+                content_type += "; charset=utf-8"
+            return Response(200, _static(name), content_type)
+        if path.startswith("/media/"):
+            return self._media(path.removeprefix("/media/"))
+        routes = {
+            "/api/overview": self.overview,
+            "/api/posts": self.posts,
+            "/api/post": self.post,
+            "/api/crawl": self.crawl_status,
+            "/api/packs": self.packs,
+            "/api/pack": self.pack,
+        }
+        handler = routes.get(path)
+        if handler is None:
+            return error_response("找不到接口", HTTPStatus.NOT_FOUND)
+        return json_response({"ok": True, **handler(query)})
+
+    def _media(self, relative: str) -> Response:
+        target = (self.workspace / relative).resolve()
+        allowed = [(self.workspace / name).resolve() for name in ("runs", "packs")]
+        if (
+            target.suffix.lower() not in MEDIA_SUFFIXES
+            or not any(target.is_relative_to(root) for root in allowed)
+            or not target.is_file()
+        ):
+            return error_response("找不到图片", HTTPStatus.NOT_FOUND)
+        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        return Response(200, target.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+
+    def overview(self, _query: dict) -> dict:
+        config = load_config(self.workspace)
+        now = utc_now()
+        with Store.open(self.workspace) as store:
+            stats = store.stats()
+            runs = store.runs(limit=8)
+            checkpoints = store.checkpoints()
+            unpacked = len(store.posts(labels=["candidate"], packed=False))
+            wait = seconds_until_next_crawl(store, config, now)
+        job = self.jobs.current
+        return {
+            "version": __version__,
+            "workspace": str(self.workspace),
+            "stats": stats,
+            "unpacked_candidates": unpacked,
+            "labels": [{"id": label, "title": LABEL_TITLES[label]} for label in LABELS],
+            "checkpoints": [
+                {"keyword": item["keyword"], "latest": china_date(item["latest_published_at"])}
+                for item in checkpoints
+            ],
+            "runs": [
+                {
+                    "id": run.id,
+                    "mode": run.mode,
+                    "status": run.status,
+                    "message": _first_line(run.message),
+                    "started_at": run.started_at,
+                    "keywords": run.params.get("keywords", []),
+                    "targets": len(run.params.get("targets", [])),
+                    "new": run.counts.get("new", 0),
+                    "records": run.counts.get("records", 0),
+                }
+                for run in runs
+            ],
+            "checks": [check.as_dict() for check in environment_checks(config)],
+            "config": {
+                "keywords": list(config.keywords),
+                "max_notes": config.mediacrawler.max_notes,
+                "max_notes_cap": MAX_NOTES_CAP,
+                "page_size": SEARCH_PAGE_SIZE,
+                "min_interval_minutes": config.mediacrawler.min_interval_minutes,
+            },
+            "next_crawl_in": wait,
+            "steps": [{"id": step, "title": STEP_TITLES[step]} for step in STEPS],
+            "job": {"id": job.id, "state": job.state} if job else None,
+        }
+
+    def posts(self, query: dict) -> dict:
+        labels = [label for label in query.get("label", "").split(",") if label in LABELS] or None
+        packed = {"yes": True, "no": False}.get(query.get("packed", ""))
+        text = query.get("q", "").strip().lower()
+        with Store.open(self.workspace) as store:
+            everything = store.posts(packed=packed)
+        counts = {label: 0 for label in LABELS}
+        for record in everything:
+            if record.label in counts:
+                counts[record.label] += 1
+        selected = [
+            record
+            for record in everything
+            if (labels is None or record.label in labels)
+            and (
+                not text
+                or text in f"{record.post.title}\n{record.post.body}\n{' '.join(record.post.tags)}".lower()
+            )
+        ]
+        return {
+            "total": len(everything),
+            "counts": counts,
+            "posts": [self._brief(record) for record in selected],
+        }
+
+    def post(self, query: dict) -> dict:
+        key = query.get("key", "")
+        with Store.open(self.workspace) as store:
+            record = store.get(key)
+        if record is None:
+            raise GleanerError(f"找不到帖子 {key}")
+        post = record.post
+        return {
+            "post": {
+                **self._brief(record),
+                "body": post.body,
+                "tags": post.tags,
+                "keywords": post.keywords,
+                "metrics": post.metrics,
+                "images": [f"/media/{path}" for path in post.images],
+                "remote_image_count": post.remote_image_count,
+                "open_url": post.open_url,
+                "label_reasons": record.label_reasons,
+                "label_source": record.label_source,
+                "first_seen_at": record.first_seen_at,
+                "changed_after_pack": record.changed_after_pack,
+            }
+        }
+
+    def crawl_status(self, query: dict) -> dict:
+        job = self.jobs.current
+        since = int(query.get("since", "0") or 0)
+        return {"job": job.snapshot(since) if job else None}
+
+    def packs(self, _query: dict) -> dict:
+        found = []
+        for manifest_path in sorted((self.workspace / "packs").glob("pack-*/manifest.json"), reverse=True):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            entries = manifest.get("posts", [])
+            found.append(
+                {
+                    "id": manifest.get("pack_id", manifest_path.parent.name),
+                    "created_at": manifest.get("created_at"),
+                    "posts": len(entries),
+                    "image_posts": sum(entry.get("intake") == "images" for entry in entries),
+                    "text_posts": sum(entry.get("intake") == "text" for entry in entries),
+                    "titles": [entry.get("title", "") for entry in entries[:4]],
+                }
+            )
+        return {"packs": found}
+
+    def pack(self, query: dict) -> dict:
+        pack_id = query.get("id", "")
+        if not PACK_ID.match(pack_id):
+            raise GleanerError("素材包编号不正确")
+        directory = self.workspace / "packs" / pack_id
+        try:
+            manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+            handoff = (directory / "HANDOFF.md").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise GleanerError(f"找不到素材包 {pack_id}") from exc
+        return {
+            "pack": {
+                "id": pack_id,
+                "path": str(directory),
+                "created_at": manifest.get("created_at"),
+                "bank": manifest.get("bank"),
+                "handoff": handoff,
+                "posts": [
+                    {
+                        "key": entry.get("key"),
+                        "title": entry.get("title"),
+                        "intake": entry.get("intake"),
+                        "source_date": entry.get("source_date"),
+                    }
+                    for entry in manifest.get("posts", [])
+                ],
+            }
+        }
+
+    # POST
+
+    def _post(self, path: str, payload: dict) -> Response:
+        if path == "/api/crawl":
+            job = self.jobs.start(
+                keywords=_strings(payload.get("keywords")),
+                targets=_strings(payload.get("urls")),
+                max_notes=_optional_int(payload.get("max_notes")),
+                force=bool(payload.get("force")),
+            )
+            return json_response({"ok": True, "job": job.snapshot()})
+        if path == "/api/crawl/stop":
+            return json_response({"ok": True, "stopping": self.jobs.stop()})
+        if path == "/api/label":
+            key, label = str(payload.get("key", "")), str(payload.get("label", ""))
+            reason = str(payload.get("reason", "")).strip()
+            with Store.open(self.workspace) as store:
+                store.set_label(
+                    key,
+                    label,
+                    source="manual",
+                    reasons=[f"manual:{reason}" if reason else "manual"],
+                    now=iso(utc_now()),
+                )
+                record = store.get(key)
+            return json_response({"ok": True, "post": self._brief(record)})
+        if path == "/api/pack":
+            keys = _strings(payload.get("keys"))
+            if not keys:
+                raise GleanerError("请先选择要打包的帖子")
+            config = load_config(self.workspace)
+            with Store.open(self.workspace) as store:
+                result = build_pack(store, config, now=utc_now(), keys=keys)
+            return json_response({"ok": True, "pack": result.as_dict()})
+        return error_response("找不到接口", HTTPStatus.NOT_FOUND)
+
+    # Helpers
+
+    def _brief(self, record: PostRecord) -> dict:
+        post = record.post
+        local = [path for path in post.images if (self.workspace / path).is_file()]
+        return {
+            "key": post.key,
+            "title": post.title,
+            "kind": post.kind,
+            "source_date": china_date(post.published_at),
+            "url": post.url,
+            "label": record.label,
+            "label_title": LABEL_TITLES.get(record.label or "", "未初筛"),
+            "images": len(local),
+            "thumb": f"/media/{local[0]}" if local else None,
+            "intake": choose_intake(post.body, len(local)),
+            "body_questions": len(listed_questions(post.body)),
+            "likes": post.metrics.get("liked_count"),
+            "packed_in": record.packed_in,
+            "excerpt": post.body[:90],
+        }
+
+
+def _static(name: str) -> bytes:
+    return resources.files("gleaner.web").joinpath("static", name).read_bytes()
+
+
+def _first_line(message: str, limit: int = 160) -> str:
+    line = message.strip().splitlines()[0] if message.strip() else ""
+    return line if len(line) <= limit else line[:limit] + "…"
+
+
+def _strings(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.splitlines()
+    if not isinstance(value, list):
+        raise GleanerError("关键词和链接必须是字符串列表")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GleanerError("篇数必须是整数")
+    return value
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server_version = "Gleaner"
+    app: WebApp
+
+    def do_GET(self) -> None:  # noqa: N802 - name required by BaseHTTPRequestHandler
+        self._dispatch("GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._dispatch("POST")
+
+    def _dispatch(self, method: str) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_BODY_BYTES:
+            response = error_response("请求内容过大", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        else:
+            body = self.rfile.read(length) if length else b""
+            headers = {key.lower(): value for key, value in self.headers.items()}
+            response = self.server.app.handle(method, self.path, headers, body)  # type: ignore[attr-defined]
+        self.send_response(response.status)
+        self.send_header("Content-Type", response.content_type)
+        self.send_header("Content-Length", str(len(response.body)))
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", response.headers.pop("Cache-Control", "no-store"))
+        for name, value in response.headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(response.body)
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature fixed by the base class
+        return
+
+
+class WebServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, workspace: Path, port: int = DEFAULT_PORT, *, jobs: CrawlJobs | None = None):
+        super().__init__((HOST, port), _Handler)
+        self.app = WebApp(workspace, jobs=jobs, port=self.server_address[1])
+
+    @property
+    def url(self) -> str:
+        return f"http://{HOST}:{self.server_address[1]}/"
+
+
+def serve(workspace: Path, *, port: int = DEFAULT_PORT, open_browser: bool = True) -> None:
+    try:
+        server = WebServer(workspace, port)
+    except OSError as exc:
+        raise GleanerError(
+            f"端口 {port} 无法使用（{exc.strerror}），换一个端口：gleaner web --port 8766"
+        ) from exc
+    print(f"Gleaner 控制台：{server.url}  （只监听本机，Ctrl+C 停止）", flush=True)
+    if open_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止", flush=True)
+    finally:
+        server.app.jobs.stop()
+        server.server_close()

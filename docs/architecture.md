@@ -12,8 +12,15 @@
 | `screening.py` | 可解释的规则初筛 |
 | `pipeline.py` | 编排：抓取 → 导入 → 初筛；抓取间隔限制 |
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
+| `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
+| `checks.py` | 环境检查，`doctor` 和网页共用 |
+| `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
+| `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止 |
+| `web/progress.py` | 从 MediaCrawler 日志识别当前步骤和需要人操作的提示（扫码、验证、确认框） |
+| `web/static/` | 原生 HTML/CSS/JS 前端，无构建步骤 |
 
-依赖方向是单向的：`cli → pipeline / packer → sources / adapters / screening → store / models`。
+依赖方向是单向的：`cli / web → pipeline / packer → sources / adapters / screening → store / models`。
+网页控制台和命令行调用同一组函数（`crawl_xhs`、`build_pack`、`environment_checks`），所以两边的限制和结果一致。
 来源相关的细节（命令行参数、导出字段）只出现在 `sources/` 和 `adapters/` 里，MediaCrawler 改版时只改这两处。
 
 ## 关键决定

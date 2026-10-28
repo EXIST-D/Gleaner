@@ -96,7 +96,7 @@ class Store:
         path = workspace / DB_NAME
         if not create and not path.is_file():
             raise GleanerError(f"找不到 {path}，请先运行 gleaner --workspace {workspace} init")
-        connection = sqlite3.connect(path)
+        connection = sqlite3.connect(path, timeout=15)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         try:

@@ -41,3 +41,8 @@ def body_replaces_images(body: str, image_count: int) -> bool:
     """
     listed = len(listed_questions(body))
     return listed >= MIN_LISTED_QUESTIONS and listed >= image_count
+
+
+def choose_intake(body: str, image_count: int) -> str:
+    """ "text" (web-intake of the body) or "images" (ingest images) for one post."""
+    return "text" if image_count == 0 or body_replaces_images(body, image_count) else "images"

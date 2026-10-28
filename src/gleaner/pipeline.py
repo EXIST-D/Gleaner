@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -82,7 +83,7 @@ def crawl_xhs(
     mode = "detail" if targets else "search"
     if mode == "search" and not keywords:
         raise GleanerError("没有关键词：用 --keyword 指定，或在 gleaner.toml 的 keywords 里配置")
-    _check_interval(store, config, now, force)
+    check_interval(store, config, now, force)
 
     run_id = new_id("run", now)
     run_dir, raw_dir = run_dirs(config, run_id)
@@ -163,18 +164,27 @@ def screen(store: Store, config: Config, *, now: datetime, rescreen: bool = Fals
     return labels
 
 
-def _check_interval(store: Store, config: Config, now: datetime, force: bool) -> None:
+def seconds_until_next_crawl(store: Store, config: Config, now: datetime) -> int:
+    """0 when a crawl may start now, else the seconds left of the minimum interval."""
     minutes = config.mediacrawler.min_interval_minutes
-    if force or minutes <= 0:
-        return
+    if minutes <= 0:
+        return 0
     crawls = [run for mode in ("search", "detail") if (run := store.last_run(SOURCE_XHS, mode))]
     if not crawls:
-        return
+        return 0
     last_started = max(parse_iso(run.started_at) for run in crawls)
-    wait = last_started + timedelta(minutes=minutes) - now
-    if wait.total_seconds() > 0:
+    wait = (last_started + timedelta(minutes=minutes) - now).total_seconds()
+    return max(0, math.ceil(wait))
+
+
+def check_interval(store: Store, config: Config, now: datetime, force: bool) -> None:
+    if force:
+        return
+    wait = seconds_until_next_crawl(store, config, now)
+    if wait > 0:
         raise GleanerError(
-            f"距离上次抓取不到 {minutes} 分钟，请 {int(wait.total_seconds() // 60) + 1} 分钟后再试（或加 --force）"
+            f"距离上次抓取不到 {config.mediacrawler.min_interval_minutes} 分钟，"
+            f"请 {wait // 60 + 1} 分钟后再试（或加 --force）"
         )
 
 

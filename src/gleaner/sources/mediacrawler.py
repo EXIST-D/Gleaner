@@ -82,7 +82,7 @@ def build_command(
 class MediaCrawlerDriver:
     def __init__(self, config: MediaCrawlerConfig, runner: Runner | None = None, *, echo: bool = True):
         self.config = config
-        self.runner = runner or _make_runner(echo)
+        self.runner = runner or make_runner(echo=echo)
 
     def problems(self) -> list[str]:
         home = self.config.home
@@ -151,7 +151,17 @@ class MediaCrawlerDriver:
         return FetchResult("ok", output_dir, "", returncode)
 
 
-def _make_runner(echo: bool) -> Runner:
+def make_runner(
+    *,
+    echo: bool = False,
+    on_line: Callable[[str], None] | None = None,
+    on_start: Callable[[subprocess.Popen], None] | None = None,
+) -> Runner:
+    """Run MediaCrawler, teeing its output to the log file, the terminal (echo) and an optional callback.
+
+    on_start receives the process so a caller can terminate it; the run then ends like any failed run.
+    """
+
     def run(command: Sequence[str], cwd: Path, timeout: int, log_path: Path) -> int:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
@@ -174,6 +184,8 @@ def _make_runner(echo: bool) -> Runner:
                 timed_out.set()
                 process.kill()
 
+            if on_start:
+                on_start(process)
             timer = threading.Timer(timeout, kill)
             timer.start()
             try:
@@ -182,6 +194,8 @@ def _make_runner(echo: bool) -> Runner:
                     log.write(line)
                     if echo:
                         sys.stderr.write(line)
+                    if on_line:
+                        on_line(line.rstrip("\n"))
                 returncode = process.wait()
             finally:
                 timer.cancel()

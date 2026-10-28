@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from gleaner import __version__
-from gleaner.bodytext import MIN_LISTED_QUESTIONS, body_replaces_images, listed_questions
+from gleaner.bodytext import MIN_LISTED_QUESTIONS, choose_intake, listed_questions
 from gleaner.config import Config
 from gleaner.errors import GleanerError
 from gleaner.models import PLATFORMS, PostRecord
@@ -104,7 +104,7 @@ def _write_post(record: PostRecord, staging: Path, workspace: Path) -> dict:
 
     available = [workspace / relative for relative in post.images if (workspace / relative).is_file()]
     body_questions = len(listed_questions(post.body))
-    use_text = not available or body_replaces_images(post.body, len(available))
+    use_text = choose_intake(post.body, len(available)) == "text"
 
     images = []
     if not use_text:
