@@ -11,7 +11,8 @@ from gleaner.errors import GleanerError
 CONFIG_NAME = "gleaner.toml"
 WORKSPACE_ENV = "GLEANER_HOME"
 MAX_NOTES_CAP = 40
-"""Two search pages of 20 notes per keyword."""
+"""Two search pages of 20 posts (four of Douyin's 10) per keyword."""
+NOWCODER_MAX_SCAN_PAGES = 25
 LOGIN_TYPES = ("qrcode", "phone", "cookie")
 
 
@@ -22,6 +23,16 @@ class MediaCrawlerConfig:
     login_type: str = "qrcode"
     max_notes: int = 20
     timeout_seconds: int = 900
+    min_interval_minutes: int = 5
+
+
+@dataclass(frozen=True)
+class NowcoderConfig:
+    max_notes: int = 20
+    scan_pages: int = 5
+    request_interval_seconds: float = 3.0
+    download_images: bool = True
+    timeout_seconds: int = 600
     min_interval_minutes: int = 5
 
 
@@ -46,6 +57,7 @@ class Config:
     workspace: Path
     keywords: tuple[str, ...] = ()
     mediacrawler: MediaCrawlerConfig = field(default_factory=MediaCrawlerConfig)
+    nowcoder: NowcoderConfig = field(default_factory=NowcoderConfig)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
     handoff: HandoffConfig = field(default_factory=HandoffConfig)
 
@@ -74,6 +86,7 @@ def load_config(workspace: Path) -> Config:
 
 def parse_config(data: dict, workspace: Path) -> Config:
     crawler = _table(data, "mediacrawler")
+    nowcoder = _table(data, "nowcoder")
     screening = _table(data, "screening")
     handoff = _table(data, "handoff")
 
@@ -87,6 +100,19 @@ def parse_config(data: dict, workspace: Path) -> Config:
     if not command:
         raise GleanerError("mediacrawler.command 不能为空")
 
+    nowcoder_notes = _int(nowcoder, "max_notes", 20, "nowcoder.max_notes")
+    if not 1 <= nowcoder_notes <= MAX_NOTES_CAP:
+        raise GleanerError(f"nowcoder.max_notes 必须在 1 到 {MAX_NOTES_CAP} 之间")
+    scan_pages = _int(nowcoder, "scan_pages", 5, "nowcoder.scan_pages")
+    if not 1 <= scan_pages <= NOWCODER_MAX_SCAN_PAGES:
+        raise GleanerError(f"nowcoder.scan_pages 必须在 1 到 {NOWCODER_MAX_SCAN_PAGES} 之间")
+    interval = nowcoder.get("request_interval_seconds", 3)
+    if isinstance(interval, bool) or not isinstance(interval, int | float) or interval < 1:
+        raise GleanerError("nowcoder.request_interval_seconds 必须是不小于 1 的数字")
+    download_images = nowcoder.get("download_images", True)
+    if not isinstance(download_images, bool):
+        raise GleanerError("nowcoder.download_images 必须是 true 或 false")
+
     return Config(
         workspace=workspace,
         keywords=tuple(_keywords(_strings(data, "keywords", [], "keywords"))),
@@ -98,6 +124,16 @@ def parse_config(data: dict, workspace: Path) -> Config:
             timeout_seconds=max(60, _int(crawler, "timeout_seconds", 900, "mediacrawler.timeout_seconds")),
             min_interval_minutes=max(
                 0, _int(crawler, "min_interval_minutes", 5, "mediacrawler.min_interval_minutes")
+            ),
+        ),
+        nowcoder=NowcoderConfig(
+            max_notes=nowcoder_notes,
+            scan_pages=scan_pages,
+            request_interval_seconds=float(interval),
+            download_images=download_images,
+            timeout_seconds=max(60, _int(nowcoder, "timeout_seconds", 600, "nowcoder.timeout_seconds")),
+            min_interval_minutes=max(
+                0, _int(nowcoder, "min_interval_minutes", 5, "nowcoder.min_interval_minutes")
             ),
         ),
         screening=ScreeningConfig(

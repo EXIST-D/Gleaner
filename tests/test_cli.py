@@ -7,7 +7,8 @@ from unittest import mock
 
 from gleaner.cli import EXIT_DEGRADED, main
 from gleaner.config import WORKSPACE_ENV
-from tests.support import WorkspaceTestCase, write_export
+from gleaner.sources.base import FetchResult
+from tests.support import NOWCODER_DISCUSS, WorkspaceTestCase, write_export, write_records
 
 
 class CliTest(WorkspaceTestCase):
@@ -32,6 +33,9 @@ class CliTest(WorkspaceTestCase):
 
         listed = self.json("list", "--label", "candidate")
         self.assertEqual(len(listed["posts"]), 3)
+        self.assertEqual(listed["posts"][0]["platform"], "xhs")
+        self.assertEqual(self.json("list", "--platform", "bili")["posts"], [])
+        self.assertEqual(len(self.json("list", "--platform", "xhs", "--platform", "bili")["posts"]), 4)
         self.assertEqual(self.json("show", "xhs:aa01")["post"]["source_date"], "2026-10-21")
 
         self.json("label", "xhs:dd04", "irrelevant", "--reason", "视频，先不要")
@@ -66,8 +70,27 @@ class CliTest(WorkspaceTestCase):
         self.assertEqual(code, EXIT_DEGRADED)
         self.assertIn("MediaCrawler", json.loads(out)["message"])
 
+    def test_crawl_nowcoder_without_mediacrawler(self):
+        self.call("init")
+
+        class FakeFetcher:
+            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+                write_records(output_dir, "nowcoder", [NOWCODER_DISCUSS])
+                return FetchResult("ok", output_dir)
+
+        with mock.patch("gleaner.cli.fetcher_for", return_value=FakeFetcher()) as factory:
+            code, out, err = self.call("crawl", "nowcoder", "--keyword", "后端 面经", "--max-notes", "5")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(factory.call_args.args[1], "nowcoder")
+        self.assertIn("翻阅最新面经列表", err)
+        self.assertIn("最多约 5 篇", err)
+        self.assertIn("新增 1", out)
+        self.assertEqual(self.json("show", "nowcoder:800000001")["post"]["platform"], "nowcoder")
+
     def test_crawl_rejects_bad_arguments(self):
         self.call("init")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["--workspace", str(self.workspace), "crawl", "weibo"])
         self.assertEqual(self.call("crawl", "xhs", "--keyword", "a,b")[0], 1)
         self.assertEqual(self.call("crawl", "xhs", "--max-notes", "500")[0], 1)
 

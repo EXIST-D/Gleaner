@@ -1,6 +1,7 @@
 # MediaCrawler 接入
 
-Gleaner 调用你本机的 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，自己不包含它的代码。
+Gleaner 调用你本机的 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 抓取小红书、抖音、B 站、快手和知乎，
+自己不包含它的代码。牛客不经过 MediaCrawler，见 [牛客读取](nowcoder.md)。
 以下内容按 2026 年 10 月的 MediaCrawler main 分支核对。
 
 ## 安装
@@ -16,9 +17,9 @@ uv sync            # 需要先安装 uv 和 Node.js 16+
 MediaCrawler 默认用 CDP 模式驱动新版 Chrome（144+），不需要安装 Playwright 浏览器。登录有两种方式：
 
 - **独立窗口（推荐）**：把 `config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改成 `False`。
-  运行时 MediaCrawler 会自己打开一个 Chrome 窗口并显示小红书二维码，用手机扫码；
-  遇到验证码就在这个窗口里输入。登录状态保存在 `MediaCrawler/browser_data/`，和你日常用的 Chrome 完全隔离，
-  方便使用小号；登录没过期时下次不用再扫码。
+  运行时 MediaCrawler 会自己打开一个 Chrome 窗口并显示对应平台的二维码，用手机上的小红书、抖音、哔哩哔哩、快手或知乎扫码；
+  遇到验证码或滑块就在这个窗口里完成。登录状态按平台保存在 `MediaCrawler/browser_data/`，和你日常用的 Chrome 完全隔离，
+  方便使用小号；登录没过期时下次不用再扫码。每个平台第一次抓取都要各扫一次。
 - **连接日常 Chrome**：保持 `CDP_CONNECT_EXISTING = True`，在 Chrome 地址栏手动打开 `chrome://inspect/#remote-debugging`，
   勾选 “Allow remote debugging for this browser instance”。运行时 Chrome 会弹出确认框，60 秒内点“接受”。
 
@@ -30,19 +31,32 @@ MediaCrawler 默认用 CDP 模式驱动新版 Chrome（144+），不需要安装
 |---|---|---|---|
 | `base_config.py` | `CDP_CONNECT_EXISTING` | `False` | 使用上面推荐的独立窗口登录 |
 | `xhs_config.py` | `SORT_TYPE` | `"time_descending"` | 默认按热度排序；按时间排序才适合每天增量抓取 |
+| `dy_config.py` | `PUBLISH_TIME_TYPE` | 例如 `7`（一周内；`1` 一天内，`180` 半年内） | 抖音搜索默认 `0` 不限发布时间 |
+| `bilibili_config.py` | `BILI_SEARCH_MODE` | 保持 `"normal"` | 其他模式按日期逐天搜索，请求多得多 |
 | `base_config.py` | `CRAWLER_MAX_SLEEP_SEC` | 保持 2 或更大 | 控制请求间隔 |
 | `base_config.py` | `ENABLE_CDP_MODE` | 保持 `True` | 复用你的浏览器登录状态 |
 
 Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置影响：
 
 ```text
---platform xhs --type search|detail --save_data_option jsonl --save_data_path <工作区>/runs/<run-id>/raw
---get_comment no --get_sub_comment no --get_media yes
+--platform xhs|dy|bili|ks|zhihu --type search|detail --save_data_option jsonl --save_data_path <工作区>/runs/<run-id>/raw
+--get_comment no --get_sub_comment no --get_media yes|no
 --crawler_max_notes_count <max_notes> --max_concurrency_num 1
 ```
 
-`--get_media yes` 会下载图文帖的图片；很多面经的题只在图片里。视频帖会下载封面和视频，
-但 Gleaner 目前只使用它的正文。
+`--get_media` 只对有图文帖的平台打开：
+
+| 平台 | `--get_media` | 搜索每页 | 数据目录 / 图片目录 | 说明 |
+|---|---|---|---|---|
+| 小红书 | `yes` | 20 | `xhs/` / `xhs/media/` | 很多面经的题只在图片里；视频帖会下载封面和视频，Gleaner 只用正文 |
+| 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频，Gleaner 只用文案 |
+| B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字） |
+| 快手 | `no` | 20 | `kuaishou/` | 只有标题文案 |
+| 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起）；视频只有标题和简介，其他类型会跳过 |
+
+MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一页，其余按整页向下取整，
+所以抖音选 25 篇实际是 20 篇。`--url` 指定帖子时，各平台接受的格式和 MediaCrawler 的 `config/<平台>_config.py` 一致：
+小红书要带 `xsec_token` 的完整链接；抖音、快手是视频链接；B 站是视频链接或 BV 号；知乎是回答、文章或视频链接。
 
 ## Gleaner 配置
 
@@ -53,15 +67,17 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 | `home` | `../MediaCrawler` | MediaCrawler 根目录（有 `main.py`），相对 `gleaner.toml` 所在目录 |
 | `command` | `["uv", "run", "main.py"]` | 在 `home` 下执行的命令；不用 uv 时改成 `[".venv/bin/python", "main.py"]` |
 | `login_type` | `qrcode` | `qrcode` / `phone` / `cookie`；CDP 模式复用浏览器的登录状态，一般保持 `qrcode` |
-| `max_notes` | 20 | 搜索时每个关键词抓多少篇。小红书按页返回、每页 20 篇，MediaCrawler 会把小于 20 的值提高到 20，其余按整页向下取整；上限 40（两页） |
+| `max_notes` | 20 | 搜索时每个关键词抓多少篇，按上表的每页篇数取整；上限 40 |
 | `timeout_seconds` | 900 | 单次运行超时 |
-| `min_interval_minutes` | 5 | 两次抓取的最小间隔，`--force` 跳过 |
+| `min_interval_minutes` | 5 | 同一平台两次抓取的最小间隔，`--force` 跳过；不同平台互不影响 |
 
 ## 常见问题
 
-- **退出码非 0 或没有产出数据**：通常是登录过期或触发了滑块验证。打开 Chrome 确认小红书仍是登录状态，
+- **退出码非 0 或没有产出数据**：通常是登录过期或触发了滑块验证。打开 Chrome 确认该平台仍是登录状态，
   必要时把 MediaCrawler 的 `HEADLESS` 设为 `False`，手动完成验证后再试。完整输出在 `runs/<run-id>/mediacrawler.log`。
-- **指定帖子抓取**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
-- **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入，不会重复抓取。
-- **MediaCrawler 改版**：命令行参数在 `src/gleaner/sources/mediacrawler.py`，导出字段在
-  `src/gleaner/adapters/xhs.py`，只需要改这两处。
+  抖音登录时日志里没有倒计时，MediaCrawler 最多等 10 分钟扫码。
+- **小红书指定帖子**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
+- **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入所有平台的数据，不会重复抓取。
+- **MediaCrawler 改版**：命令行参数和每个平台的分页、是否下载媒体在 `src/gleaner/sources/mediacrawler.py`，
+  目录对应在 `src/gleaner/adapters/exports.py`，导出字段在 `src/gleaner/adapters/<平台>.py`，
+  日志里识别进度的标记在 `src/gleaner/web/progress.py`。

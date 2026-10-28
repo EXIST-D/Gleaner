@@ -30,7 +30,10 @@ def environment_checks(config: Config) -> list[Check]:
         bank_detail += "（还不是题库，先运行 ibank.py init --bank）"
     return [
         Check(
-            "mediacrawler", "MediaCrawler", not problems, "；".join(problems) or str(config.mediacrawler.home)
+            "mediacrawler",
+            "MediaCrawler（牛客以外的平台需要）",
+            not problems,
+            "；".join(problems) or str(config.mediacrawler.home),
         ),
         Check(
             "keywords", "默认关键词", bool(config.keywords), "、".join(config.keywords) or "没有默认关键词"

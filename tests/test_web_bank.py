@@ -2,7 +2,6 @@ import json
 import sys
 import unittest
 
-from gleaner.bank import note_key
 from gleaner.config import load_config
 from gleaner.pipeline import import_export
 from gleaner.store import Store
@@ -300,11 +299,6 @@ class BankPageTest(WorkspaceTestCase):
         self.assertEqual(
             export_name(company="A/B 公司", title="智能体:记忆"), "采集题库报告-A_B_公司-智能体_记忆"
         )
-
-    def test_note_key(self):
-        self.assertEqual(note_key("https://www.xiaohongshu.com/explore/6ae0671c"), "xhs:6ae0671c")
-        self.assertIsNone(note_key("https://example.org/explore/1"))
-        self.assertIsNone(note_key(None))
 
 
 if __name__ == "__main__":

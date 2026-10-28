@@ -1,20 +1,30 @@
 # Gleaner · 拾穗
 
-把散落在小红书等平台上的真实面经一穗一穗捡回来：调用你本机的
-[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 小批量抓取帖子，按帖子去重、规则初筛，
-再打成素材包，交给 [Interview Bank](https://github.com/EXIST-D/Interview-bank) 导入一个**独立的采集题库**。
+把散落在小红书、抖音、B 站、快手、知乎和牛客上的真实面经一穗一穗捡回来：前五个平台调用你本机的
+[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 小批量抓取，牛客由 Gleaner 直接读取公开的面经帖子；
+按帖子去重、规则初筛，再打成素材包，交给 [Interview Bank](https://github.com/EXIST-D/Interview-bank) 导入一个**独立的采集题库**。
 
 Gleaner 只负责“发现 → 抓取 → 筛选 → 打包”。题目抽取、分类、同义题合并和参考答案仍由 Interview Bank 完成，
 所以主项目的保守去重原则（拿不准就交给你裁决）同样适用于采集来的题。
 
-当前版本 **0.1.0**，支持小红书。
+当前版本 **0.1.0**（未发布的改动见 [CHANGELOG](CHANGELOG.md)）。
+
+| 平台 | 代码 | 抓取方式 | 导入内容 |
+|---|---|---|---|
+| 小红书 | `xhs` | MediaCrawler，扫码登录；搜索每页 20 篇 | 正文 + 图文帖的图片 |
+| 抖音 | `dy` | MediaCrawler，扫码登录；搜索每页 10 篇 | 文案 + 图集的图片；视频帖只用文案 |
+| B 站 | `bili` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题和简介（不下载视频） |
+| 快手 | `ks` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题文案（不下载视频） |
+| 知乎 | `zhihu` | MediaCrawler，扫码登录；搜索每页 20 条 | 回答、文章的纯文字正文 |
+| 牛客 | `nowcoder` | Gleaner 直接读取，不登录、不用站内搜索 | 讨论帖和动态的正文 + 图片 |
 
 ## 工作方式
 
 ```text
-MediaCrawler（你本机、你自己的登录）
-        │  jsonl + 图片
-        ▼
+MediaCrawler（你本机、你自己的登录）   Gleaner 牛客读取器（公开的面经列表与帖子）
+        │  jsonl + 图片                      │  同样的 jsonl + 图片布局
+        └──────────────┬─────────────────────┘
+                       ▼
 gleaner crawl / import ──► 工作区 SQLite：帖子按「平台 + 帖子 ID」去重，记录每个关键词的最新发布时间
         │
         ▼
@@ -34,6 +44,7 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake →
 
 - Python **3.11+**，Gleaner 本身只用标准库。
 - 你自己下载安装的 MediaCrawler（需要 uv、Node.js 和新版 Chrome），见 [MediaCrawler 接入](docs/mediacrawler.md)。
+  只抓牛客时不需要它，见 [牛客读取](docs/nowcoder.md)。
 - 导入素材包时需要 Interview Bank 的 `ibank.py`（Python 3.10+）和一个支持 Agent Skills 的 Agent。
 
 ## 快速开始
@@ -57,12 +68,15 @@ python3 -B <Interview-bank>/skills/interview-bank/scripts/ibank.py init --bank c
 # 5. 检查环境
 gleaner doctor
 
-# 6. 小批量抓取（搜索按页返回，每个关键词一页 20 篇；两次至少间隔 5 分钟）
+# 6. 小批量抓取（搜索按页返回，每个关键词默认一页；同一平台两次至少间隔 5 分钟）
 gleaner crawl xhs --keyword "后端 面经"
 gleaner crawl xhs --url "https://www.xiaohongshu.com/explore/<帖子ID>?xsec_token=..."
+gleaner crawl bili --keyword "Java 面试 复盘"
+gleaner crawl nowcoder --keyword "后端 一面" --max-notes 10   # 在最新面经里找标题或摘要含“后端”和“一面”的
+gleaner crawl nowcoder --url "https://www.nowcoder.com/discuss/<帖子ID>"
 
 # 7. 看初筛结果，必要时人工改标签
-gleaner list --label candidate
+gleaner list --label candidate --platform nowcoder
 gleaner show xhs:<帖子ID>
 gleaner label xhs:<帖子ID> promo --reason "结尾在卖课"
 
@@ -70,7 +84,11 @@ gleaner label xhs:<帖子ID> promo --reason "结尾在卖课"
 gleaner pack --limit 20
 ```
 
-已经用 MediaCrawler 的 WebUI 或命令行抓过的数据，可以直接导入：`gleaner import <MediaCrawler 的 data 目录>`。
+已经用 MediaCrawler 的 WebUI 或命令行抓过的数据，可以直接导入：`gleaner import <MediaCrawler 的 data 目录>`，
+里面的 `xhs/`、`douyin/`、`bili/`、`kuaishou/`、`zhihu/` 会一起导入。
+
+帖子键是 `平台代码:帖子 ID`，例如 `xhs:6650a1b2c3d4`、`dy:7300…`、`bili:115…`（av 号）、
+`zhihu:answer-…` / `zhihu:article-…`、`nowcoder:945…`（讨论帖）或 `nowcoder:<32 位 UUID>`（动态）。
 
 ## 网页控制台
 
@@ -81,10 +99,11 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 上面这些步骤都可以在浏览器里完成，不用记命令：
 
 - **概览**：帖子数、初筛分布、待打包数量、每个关键词抓到的最新日期、最近几次抓取和环境检查。
-- **抓取**：填关键词（回车添加）、选每个关键词抓一页还是两页，点“开始抓取”。页面显示当前步骤
-  （启动浏览器 → 登录 → 搜索 → 下载 → 导入与初筛），需要扫码、输入验证码或点确认框时会醒目提示并倒计时，
-  下方是实时日志，可以随时停止。批量上限、两次抓取的最小间隔、去重和初筛与命令行完全相同。
-- **帖子**：按标签、是否打包筛选或搜索；卡片上能看到封面、标签，以及打包时会“读正文”还是“看图”。
+- **抓取**：先选平台，再填关键词（回车添加）、选每个关键词抓几页（牛客选篇数），点“开始抓取”。页面按平台显示步骤
+  （例如小红书是 启动浏览器 → 登录 → 搜索 → 下载 → 导入与初筛，牛客是 翻阅面经列表 → 读取帖子 → 下载图片 → 导入与初筛），
+  需要扫码、输入验证码或点确认框时会醒目提示（扫码有倒计时的平台会倒计时），牛客要求放慢时会提示正在等待；
+  下方是实时日志，可以随时停止。批量上限、同一平台两次抓取的最小间隔、去重和初筛与命令行完全相同。
+- **帖子**：按平台、标签、是否打包筛选或搜索；卡片上能看到封面、平台、标签，以及打包时会“读正文”还是“看图”。
   点开一篇可以看全部图片和正文、一键改标签、打开原帖；勾选后点“打包所选”。
 - **素材包**：每个包的 HANDOFF.md，命令可以一键复制。
 - **题库**：Agent 导入采集题库后整理好的题目。按领域分组、按出现次数排序，可以按公司、领域筛选或搜索；
@@ -103,10 +122,10 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 |---|---|
 | `init` | 创建工作区：`gleaner.toml`、`gleaner.db`、`runs/`、`packs/` |
 | `doctor` | 检查 MediaCrawler 目录与启动命令、默认关键词、`ibank.py`、采集题库 |
-| `crawl xhs` | 调用 MediaCrawler 抓取（`--keyword` 搜索或 `--url` 指定帖子），随后导入并初筛 |
-| `import <dir>` | 导入已有的 MediaCrawler 输出目录 |
+| `crawl <平台>` | `xhs` `dy` `bili` `ks` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛 |
+| `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
 | `screen [--all]` | 对未打标签的帖子初筛；`--all` 重判以前的规则标签，人工标签不动 |
-| `list` / `show` | 查看帖子、标签和初筛理由 |
+| `list` / `show` | 查看帖子、标签和初筛理由；`list --platform` 按平台筛选 |
 | `label <key> <label>` | 人工改标签，以后的初筛不会覆盖 |
 | `pack` | 打包（默认只打 `candidate` 且没打过包的帖子） |
 | `web` | 打开本机网页控制台（`--port` 换端口，`--no-open` 不自动打开浏览器） |
@@ -128,8 +147,8 @@ Gleaner/
     ├── gleaner.toml       # 配置；路径相对本文件，默认指向 ../MediaCrawler 和 ../collected-bank
     ├── gleaner.db         # 帖子、标签、抓取记录、关键词进度
     ├── runs/<run-id>/
-    │   ├── mediacrawler.log   # MediaCrawler 的完整输出
-    │   └── raw/xhs/           # MediaCrawler 原始导出（jsonl + media/）
+    │   ├── mediacrawler.log   # MediaCrawler 的完整输出（牛客是 nowcoder.log）
+    │   └── raw/<平台目录>/     # 原始导出（jsonl + media/），如 xhs/、douyin/ 与 dy/、nowcoder/
     └── packs/<pack-id>/   # 交给 Interview Bank 的素材包，格式见 docs/pack-format.md
 ```
 
@@ -138,8 +157,11 @@ Gleaner/
 
 ## 使用边界
 
-- **个人学习、非商业**。MediaCrawler 使用“非商业学习许可证”，禁止大规模爬取。小红书搜索按页返回（每页 20 篇），
-  Gleaner 默认每个关键词只抓一页、最多两页，并发 1，不抓评论，两次抓取之间至少间隔 5 分钟。
+- **个人学习、非商业**。MediaCrawler 使用“非商业学习许可证”，禁止大规模爬取。搜索按页返回（抖音每页 10 篇，其余 20 篇），
+  Gleaner 默认每个关键词只抓一页、最多 40 篇，并发 1，不抓评论，同一平台两次抓取之间至少间隔 5 分钟。
+- **牛客按 robots.txt 行事**。牛客的 robots.txt 不允许抓取站内搜索 `/search`，所以 Gleaner 不用搜索，
+  而是翻阅最新面经列表（默认最多 5 页、100 篇）在本地匹配关键词；不登录，一次一个请求，间隔至少 3 秒，
+  遇到 429 按 `Retry-After` 等待、连续 3 次或遇到验证页就停下。作者昵称和 IP 属地不保存。
 - **MediaCrawler 不随本仓库分发**。它的代码不在这里，每个使用者各自下载安装，各自遵守它的许可证。
 - **数据留在本机**。工作区、采集题库、MediaCrawler 目录和登录状态都已加入 `.gitignore`。帖子和图片的版权属于原作者，
   不要公开转载原文；交给题库的是题目、来源链接和必要的短摘录。
@@ -157,9 +179,9 @@ CI 在 Windows、macOS、Linux × Python 3.11–3.13 上运行测试和 lint。�
 
 ## 计划
 
-- 牛客讨论帖来源（MediaCrawler 不支持牛客，需要单独的抓取器）
+- 视频帖的口述内容：B 站、抖音、快手的面试复盘视频目前只导入标题和简介，以后可以交给 Interview Bank 的
+  `ingest media` 本地转写
 - 可选的大模型复判：规则拿不准的帖子再交给模型判断
-- B 站面试复盘视频、知乎面经回答（MediaCrawler 已支持，接入后走 Interview Bank 的音视频与网页入库）
 - 采集题库与个人题库的覆盖对照
 
 ## 许可证

@@ -1,6 +1,7 @@
 import unittest
 
-from gleaner.adapters.xhs import ParseReport, content_files, copy_export, iter_posts, parse_count
+from gleaner.adapters.common import ParseReport, parse_count
+from gleaner.adapters.exports import content_files, copy_export, iter_posts
 from tests.support import INTERVIEW_NOTE, WorkspaceTestCase, write_export
 
 
@@ -68,7 +69,7 @@ class AdapterTest(WorkspaceTestCase):
     def test_copy_export_keeps_records_and_images_only(self):
         source = write_export(self.workspace / "external" / "data")
         target = self.workspace / "runs" / "r2" / "raw"
-        copy_export(source, target)
+        self.assertEqual(copy_export(source, target), ["xhs"])
         self.assertEqual(len(content_files(target)), 1)
         self.assertTrue((target / "xhs" / "media" / "aa01" / "002.jpg").is_file())
         self.assertFalse((target / "xhs" / "media" / "dd04" / "video.mp4").exists())

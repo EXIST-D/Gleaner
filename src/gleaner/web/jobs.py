@@ -8,11 +8,20 @@ import traceback
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
 from gleaner.config import MAX_NOTES_CAP, Config, load_config, validate_keywords
 from gleaner.errors import GleanerError
-from gleaner.pipeline import check_interval, crawl_xhs, planned_notes
-from gleaner.sources.mediacrawler import MediaCrawlerDriver, Runner, make_runner
+from gleaner.pipeline import (
+    CRAWL_PLATFORMS,
+    check_interval,
+    crawl,
+    default_max_notes,
+    fetcher_for,
+    planned_notes,
+)
+from gleaner.sources.base import Fetcher, FetchResult
+from gleaner.sources.mediacrawler import Runner, make_runner
 from gleaner.store import Store
 from gleaner.timeutil import iso, new_id, utc_now
 from gleaner.web.progress import Progress
@@ -20,15 +29,32 @@ from gleaner.web.progress import Progress
 MAX_LINES = 3000
 MAX_LINE_CHARS = 400
 
-DriverFactory = Callable[[Config, Runner], MediaCrawlerDriver]
+
+class FetcherFactory(Protocol):
+    def __call__(
+        self,
+        config: Config,
+        platform: str,
+        *,
+        runner: Runner,
+        on_line: Callable[[str], None],
+        should_stop: Callable[[], bool],
+    ) -> Fetcher: ...
 
 
-def default_driver(config: Config, runner: Runner) -> MediaCrawlerDriver:
-    return MediaCrawlerDriver(config.mediacrawler, runner)
+def default_fetcher(
+    config: Config,
+    platform: str,
+    *,
+    runner: Runner,
+    on_line: Callable[[str], None],
+    should_stop: Callable[[], bool],
+) -> Fetcher:
+    return fetcher_for(config, platform, runner=runner, on_line=on_line, should_stop=should_stop, echo=False)
 
 
 class CrawlJob:
-    def __init__(self, job_id: str, params: dict, started_at: str):
+    def __init__(self, job_id: str, params: dict, started_at: str, *, download: bool = True):
         self.id = job_id
         self.params = params
         self.started_at = started_at
@@ -36,7 +62,7 @@ class CrawlJob:
         self.state = "running"
         self.outcome: dict | None = None
         self.error: str | None = None
-        self.progress = Progress()
+        self.progress = Progress(params.get("platform", "xhs"), download=download)
         self._lines: list[str] = []
         self._dropped = 0
         self._process: subprocess.Popen | None = None
@@ -75,6 +101,10 @@ class CrawlJob:
             process.terminate()
         return True
 
+    def stop_requested(self) -> bool:
+        with self._lock:
+            return self._stop_requested
+
     def crawler_finished(self) -> None:
         with self._lock:
             self.progress.finish_crawler()
@@ -108,19 +138,27 @@ class CrawlJobs:
         self,
         workspace: Path,
         *,
-        driver_factory: DriverFactory = default_driver,
+        fetcher_factory: FetcherFactory = default_fetcher,
         clock: Callable[[], datetime] = utc_now,
     ):
         self.workspace = workspace
-        self.driver_factory = driver_factory
+        self.fetcher_factory = fetcher_factory
         self.clock = clock
         self.current: CrawlJob | None = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
     def start(
-        self, *, keywords: Sequence[str], targets: Sequence[str], max_notes: int | None, force: bool
+        self,
+        *,
+        platform: str = "xhs",
+        keywords: Sequence[str],
+        targets: Sequence[str],
+        max_notes: int | None,
+        force: bool,
     ) -> CrawlJob:
+        if platform not in CRAWL_PLATFORMS:
+            raise GleanerError(f"不支持抓取 {platform}")
         config = load_config(self.workspace)
         keywords = validate_keywords(list(keywords))
         targets = [value.strip() for value in targets if value.strip()]
@@ -133,20 +171,23 @@ class CrawlJobs:
             if self.current and self.current.running:
                 raise GleanerError("已经有一个抓取正在进行，请等它结束或先停止")
             with Store.open(self.workspace) as store:
-                check_interval(store, config, now, force)
+                check_interval(store, config, now, force, platform=platform)
             params = {
+                "platform": platform,
                 "keywords": keywords,
                 "targets": targets,
-                "max_notes": max_notes or config.mediacrawler.max_notes,
+                "max_notes": max_notes or default_max_notes(config, platform),
                 "planned_notes": planned_notes(
-                    config, keywords=keywords, targets=targets, max_notes=max_notes
+                    config, platform=platform, keywords=keywords, targets=targets, max_notes=max_notes
                 ),
                 "force": force,
             }
-            job = CrawlJob(new_id("job", now), params, iso(now))
+            job = CrawlJob(new_id("job", now), params, iso(now), download=config.nowcoder.download_images)
             self.current = job
             self._thread = threading.Thread(
-                target=self._run, args=(job, config, keywords, targets, max_notes, force), daemon=True
+                target=self._run,
+                args=(job, config, platform, keywords, targets, max_notes, force),
+                daemon=True,
             )
             self._thread.start()
         return job
@@ -163,26 +204,24 @@ class CrawlJobs:
         self,
         job: CrawlJob,
         config: Config,
+        platform: str,
         keywords: list[str],
         targets: list[str],
         max_notes: int | None,
         force: bool,
     ) -> None:
-        base = make_runner(on_line=job.add_line, on_start=job.attach)
-
-        def runner(command: Sequence[str], cwd: Path, timeout: int, log_path: Path) -> int:
-            try:
-                return base(command, cwd, timeout, log_path)
-            finally:
-                job.crawler_finished()
-
+        runner = make_runner(on_line=job.add_line, on_start=job.attach)
         try:
-            driver = self.driver_factory(config, runner)
+            inner = self.fetcher_factory(
+                config, platform, runner=runner, on_line=job.add_line, should_stop=job.stop_requested
+            )
+            fetcher = _Finishing(inner, job)
             with Store.open(self.workspace) as store:
-                outcome = crawl_xhs(
+                outcome = crawl(
                     store,
                     config,
-                    driver,
+                    fetcher,
+                    platform=platform,
                     keywords=keywords,
                     targets=targets,
                     max_notes=max_notes,
@@ -196,3 +235,20 @@ class CrawlJobs:
             for line in traceback.format_exc().splitlines():
                 job.add_line(line)
             job.finish(state="failed", error=f"意外错误：{exc}")
+
+
+class _Finishing:
+    """Moves the job to the import step as soon as the fetcher returns."""
+
+    def __init__(self, fetcher: Fetcher, job: CrawlJob):
+        self.fetcher = fetcher
+        self.job = job
+
+    def problems(self) -> list[str]:
+        return self.fetcher.problems()
+
+    def run(self, **kwargs) -> FetchResult:
+        try:
+            return self.fetcher.run(**kwargs)
+        finally:
+            self.job.crawler_finished()

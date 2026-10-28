@@ -3,13 +3,16 @@
 MediaCrawler is under a non-commercial learning license and is never vendored: Gleaner only runs the user's
 own checkout. Verified against NanmiCoder/MediaCrawler main as of 2026-10:
 
-- `main.py --platform xhs --type search|detail` with `--keywords` or `--specified_id` (comma separated).
-- `--save_data_option jsonl --save_data_path <dir>` writes `<dir>/xhs/jsonl/<type>_contents_<date>.jsonl`.
-- `--get_media yes` downloads note images to `<dir>/xhs/media/<note_id>/001.jpg …` (videos: cover + video).
-- Search fetches whole result pages of 20 notes per keyword and raises a smaller
-  `--crawler_max_notes_count` to 20 (`media_platform/xhs/core.py: search`).
+- `main.py --platform xhs|dy|bili|ks|zhihu --type search|detail` with `--keywords` or `--specified_id`
+  (comma separated; links or IDs as each platform's `config/*_config.py` shows).
+- `--save_data_option jsonl --save_data_path <dir>` writes `<dir>/<data dir>/jsonl/<type>_contents_<date>.jsonl`
+  (`adapters/exports.py` lists the data and media directory of each platform).
+- `--get_media yes` downloads post images to `<dir>/<media dir>/media/<post id>/001.jpg …`; for videos it
+  downloads a cover and the whole video.
+- Search fetches whole result pages per keyword and raises a smaller `--crawler_max_notes_count` to one page
+  (`media_platform/<platform>/core.py: search`): Douyin pages hold 10 posts, the others 20.
 
-If MediaCrawler changes its command line or output layout, this module and `adapters/xhs.py` change.
+If MediaCrawler changes its command line or output layout, this module and `adapters/` change.
 """
 
 from __future__ import annotations
@@ -21,9 +24,10 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
-from gleaner.adapters.xhs import content_files
+from gleaner.adapters.exports import content_files
 from gleaner.config import MediaCrawlerConfig
 from gleaner.sources.base import FetchResult
 
@@ -32,9 +36,27 @@ MODES = ("search", "detail")
 SEARCH_PAGE_SIZE = 20
 
 
-def search_notes_per_keyword(max_notes: int) -> int:
-    """How many notes MediaCrawler really fetches per keyword: whole pages, at least one."""
-    return max(SEARCH_PAGE_SIZE, max_notes // SEARCH_PAGE_SIZE * SEARCH_PAGE_SIZE)
+@dataclass(frozen=True)
+class CrawlerPlatform:
+    code: str
+    """Gleaner's platform code, which is also MediaCrawler's `--platform` value."""
+    page_size: int
+    get_media: bool
+    """Only image posts need their media: a video would be downloaded whole and Gleaner reads only its text."""
+
+
+PLATFORMS = {
+    "xhs": CrawlerPlatform("xhs", SEARCH_PAGE_SIZE, get_media=True),
+    "dy": CrawlerPlatform("dy", 10, get_media=True),
+    "bili": CrawlerPlatform("bili", SEARCH_PAGE_SIZE, get_media=False),
+    "ks": CrawlerPlatform("ks", SEARCH_PAGE_SIZE, get_media=False),
+    "zhihu": CrawlerPlatform("zhihu", SEARCH_PAGE_SIZE, get_media=False),
+}
+
+
+def search_notes_per_keyword(max_notes: int, page_size: int = SEARCH_PAGE_SIZE) -> int:
+    """How many posts MediaCrawler really fetches per keyword: whole pages, at least one."""
+    return max(page_size, max_notes // page_size * page_size)
 
 
 Runner = Callable[[Sequence[str], Path, int, Path], int]
@@ -44,6 +66,7 @@ Runner = Callable[[Sequence[str], Path, int, Path], int]
 def build_command(
     config: MediaCrawlerConfig,
     *,
+    platform: str = "xhs",
     mode: str,
     output_dir: Path,
     keywords: Sequence[str] = (),
@@ -52,7 +75,8 @@ def build_command(
 ) -> list[str]:
     if mode not in MODES:
         raise ValueError(f"unsupported mode: {mode}")
-    command = [*config.command, "--platform", "xhs", "--lt", config.login_type, "--type", mode]
+    spec = PLATFORMS[platform]
+    command = [*config.command, "--platform", spec.code, "--lt", config.login_type, "--type", mode]
     if mode == "search":
         if not keywords:
             raise ValueError("search mode needs keywords")
@@ -71,7 +95,7 @@ def build_command(
         "--get_sub_comment",
         "no",
         "--get_media",
-        "yes",
+        "yes" if spec.get_media else "no",
         "--crawler_max_notes_count",
         str(max_notes),
         "--max_concurrency_num",
@@ -80,8 +104,18 @@ def build_command(
 
 
 class MediaCrawlerDriver:
-    def __init__(self, config: MediaCrawlerConfig, runner: Runner | None = None, *, echo: bool = True):
+    def __init__(
+        self,
+        config: MediaCrawlerConfig,
+        runner: Runner | None = None,
+        *,
+        platform: str = "xhs",
+        echo: bool = True,
+    ):
+        if platform not in PLATFORMS:
+            raise ValueError(f"MediaCrawler does not crawl {platform}")
         self.config = config
+        self.platform = platform
         self.runner = runner or make_runner(echo=echo)
 
     def problems(self) -> list[str]:
@@ -113,6 +147,7 @@ class MediaCrawlerDriver:
             return FetchResult("degraded", output_dir, "；".join(problems))
         command = build_command(
             self.config,
+            platform=self.platform,
             mode=mode,
             output_dir=output_dir,
             keywords=keywords,
@@ -133,7 +168,7 @@ class MediaCrawlerDriver:
         except OSError as exc:
             return FetchResult("degraded", output_dir, f"无法启动 MediaCrawler：{exc}")
 
-        produced = bool(content_files(output_dir))
+        produced = bool(content_files(output_dir, self.platform))
         if returncode != 0:
             return FetchResult(
                 "degraded",

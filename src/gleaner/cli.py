@@ -17,10 +17,17 @@ from gleaner.config import (
     validate_keywords,
 )
 from gleaner.errors import GleanerError
-from gleaner.models import LABEL_TITLES, LABELS, PostRecord
+from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
 from gleaner.packer import DEFAULT_LIMIT, build_pack
-from gleaner.pipeline import crawl_xhs, import_export, planned_notes, screen
-from gleaner.sources.mediacrawler import SEARCH_PAGE_SIZE, MediaCrawlerDriver
+from gleaner.pipeline import (
+    CRAWL_PLATFORMS,
+    crawl,
+    fetcher_for,
+    import_export,
+    page_size,
+    planned_notes,
+    screen,
+)
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
 
@@ -65,19 +72,24 @@ def build_parser() -> argparse.ArgumentParser:
     command("init", cmd_init, "创建工作区：配置文件、数据库和目录")
     command("doctor", cmd_doctor, "检查配置、MediaCrawler 和 Interview Bank 路径")
 
-    crawl = command("crawl", cmd_crawl, "调用 MediaCrawler 抓取并导入")
-    crawl.add_argument("platform", choices=["xhs"], help="平台（目前支持 xhs 小红书）")
-    crawl.add_argument("--keyword", action="append", default=[], help="搜索关键词，可重复；默认用配置里的")
-    crawl.add_argument("--url", action="append", default=[], help="只抓这些帖子（链接或 ID），可重复")
-    crawl.add_argument(
+    platforms_help = "、".join(f"{code} {PLATFORMS[code].label}" for code in CRAWL_PLATFORMS)
+    crawling = command("crawl", cmd_crawl, "抓取并导入（牛客由 Gleaner 直接读取，其余平台调用 MediaCrawler）")
+    crawling.add_argument("platform", choices=CRAWL_PLATFORMS, help=f"平台：{platforms_help}")
+    crawling.add_argument("--keyword", action="append", default=[], help="搜索关键词，可重复；默认用配置里的")
+    crawling.add_argument("--url", action="append", default=[], help="只抓这些帖子（链接或 ID），可重复")
+    crawling.add_argument(
         "--max-notes",
         type=int,
-        help=f"搜索时每个关键词抓多少篇（1–{MAX_NOTES_CAP}，按每页 20 篇取整，最少一页）",
+        help=f"搜索时每个关键词抓多少篇（1–{MAX_NOTES_CAP}；MediaCrawler 平台按整页取整，最少一页）",
     )
-    crawl.add_argument("--force", action="store_true", help="忽略两次抓取之间的最小间隔")
-    crawl.add_argument("--quiet", action="store_true", help="不在终端显示 MediaCrawler 的输出")
+    crawling.add_argument("--force", action="store_true", help="忽略同一平台两次抓取之间的最小间隔")
+    crawling.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
 
-    imported = command("import", cmd_import, "导入已有的 MediaCrawler 输出目录（含 xhs/ 子目录）")
+    imported = command(
+        "import",
+        cmd_import,
+        "导入已有的抓取输出目录（含 xhs/、douyin/、bili/、kuaishou/、zhihu/ 或 nowcoder/）",
+    )
     imported.add_argument("source", type=Path)
 
     screening = command("screen", cmd_screen, "对未打标签的帖子做规则初筛")
@@ -85,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = command("list", cmd_list, "列出帖子")
     listing.add_argument("--label", action="append", choices=LABELS, help="按标签筛选，可重复")
+    listing.add_argument("--platform", action="append", choices=list(PLATFORMS), help="按平台筛选，可重复")
     listing.add_argument("--unpacked", action="store_true", help="只看还没打包的")
     listing.add_argument("--limit", type=int, default=30)
 
@@ -153,18 +166,26 @@ def cmd_crawl(args) -> int:
         raise GleanerError(f"--max-notes 必须在 1 到 {MAX_NOTES_CAP} 之间")
     keywords = validate_keywords(args.keyword) or list(config.keywords)
     targets = [value.strip() for value in args.url if value.strip()]
-    driver = MediaCrawlerDriver(config.mediacrawler, echo=not (args.quiet or args.json))
+    platform = args.platform
+    fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json))
     if not args.json and not targets:
-        planned = planned_notes(config, keywords=keywords, targets=targets, max_notes=args.max_notes)
-        print(
-            f"小红书搜索按页抓取（每页 {SEARCH_PAGE_SIZE} 篇）：{len(keywords)} 个关键词，本次最多约 {planned} 篇",
-            file=sys.stderr,
+        planned = planned_notes(
+            config, platform=platform, keywords=keywords, targets=targets, max_notes=args.max_notes
         )
+        label = PLATFORMS[platform].label
+        size = page_size(platform)
+        how = (
+            f"{label}搜索按页抓取（每页 {size} 篇）"
+            if size
+            else f"{label}：翻阅最新面经列表（最多 {config.nowcoder.scan_pages} 页），保存标题或摘要含关键词的帖子"
+        )
+        print(f"{how}：{len(keywords)} 个关键词，本次最多约 {planned} 篇", file=sys.stderr)
     with Store.open(config.workspace) as store:
-        outcome = crawl_xhs(
+        outcome = crawl(
             store,
             config,
-            driver,
+            fetcher,
+            platform=platform,
             keywords=keywords,
             targets=targets,
             max_notes=args.max_notes,
@@ -194,7 +215,12 @@ def cmd_screen(args) -> int:
 def cmd_list(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
     with Store.open(config.workspace) as store:
-        records = store.posts(labels=args.label, packed=False if args.unpacked else None, limit=args.limit)
+        records = store.posts(
+            labels=args.label,
+            platforms=args.platform,
+            packed=False if args.unpacked else None,
+            limit=args.limit,
+        )
     data = {"ok": True, "posts": [_record_brief(record) for record in records]}
     text = [_record_line(record) for record in records] or ["没有符合条件的帖子"]
     return _emit(args, data, text)
@@ -262,6 +288,7 @@ def cmd_stats(args) -> int:
     text = [
         f"帖子 {stats['posts']} 篇，已打包 {stats['packed']} 篇，抓取/导入 {stats['runs']} 次",
         f"标签：{_labels_text(stats['labels'])}",
+        f"平台：{'、'.join(f'{_platform_label(k)} {v}' for k, v in stats['platforms'].items()) or '无'}",
         f"类型：{'、'.join(f'{k} {v}' for k, v in stats['kinds'].items()) or '无'}",
     ]
     if stats["changed_after_pack"]:
@@ -316,10 +343,15 @@ def _labels_text(labels) -> str:
     return "、".join(f"{LABEL_TITLES.get(k, k)} {v}" for k, v in sorted(labels.items())) or "无"
 
 
+def _platform_label(code: str) -> str:
+    return PLATFORMS[code].label if code in PLATFORMS else code
+
+
 def _record_brief(record: PostRecord) -> dict:
     post = record.post
     return {
         "key": post.key,
+        "platform": post.platform,
         "title": post.title,
         "kind": post.kind,
         "source_date": china_date(post.published_at),

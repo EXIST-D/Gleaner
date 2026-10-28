@@ -5,6 +5,16 @@
 const TOKEN = document.querySelector('meta[name="gleaner-token"]').content;
 const VIEWS = ["overview", "crawl", "posts", "packs", "bank"];
 const LABEL_ORDER = ["candidate", "collection", "promo", "unclear", "irrelevant"];
+const NOWCODER_COUNTS = [5, 10, 20, 40];
+const METRIC_TITLES = { liked_count: "赞", collected_count: "收藏", comment_count: "评论", share_count: "分享", view_count: "播放/浏览" };
+const URL_HINTS = {
+  xhs: "每行一个链接，需要带 xsec_token，从浏览器地址栏复制",
+  dy: "每行一个抖音视频或图文链接，例如 https://www.douyin.com/video/…",
+  bili: "每行一个 B 站视频链接或 BV 号",
+  ks: "每行一个快手视频链接，例如 https://www.kuaishou.com/short-video/…",
+  zhihu: "每行一个知乎回答、文章或视频链接",
+  nowcoder: "每行一个牛客讨论帖或动态链接，例如 https://www.nowcoder.com/discuss/…",
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -73,15 +83,15 @@ async function copy(text) {
 const state = {
   view: null,
   overview: null,
-  crawl: { mode: "search", keywords: null, urls: "", pages: 1, force: false },
+  crawl: { platform: "xhs", mode: "search", keywords: null, urls: "", pages: 1, count: null, force: false },
   job: null,
   since: 0,
   logLines: [],
   pollTimer: null,
   qrDeadline: null,
-  waitDeadline: null,
+  waitDeadlines: {},
   tick: null,
-  posts: { label: "candidate", packed: "no", q: "", data: null },
+  posts: { label: "candidate", platform: "", packed: "no", q: "", data: null },
   bank: { data: null, topic: "", company: "", q: "", showExcluded: false },
   selected: new Set(),
 };
@@ -118,9 +128,20 @@ async function show(view) {
 
 async function refreshOverview() {
   state.overview = await api("/api/overview");
-  const wait = state.overview.next_crawl_in;
-  state.waitDeadline = wait > 0 ? Date.now() + wait * 1000 : null;
+  state.waitDeadlines = {};
+  for (const p of state.overview.platforms) {
+    if (p.next_crawl_in > 0) state.waitDeadlines[p.id] = Date.now() + p.next_crawl_in * 1000;
+  }
   return state.overview;
+}
+
+function platformOf(id) {
+  const platforms = state.overview.platforms;
+  return platforms.find((p) => p.id === id) || platforms[0];
+}
+
+function platformBadge(title) {
+  return title ? `<span class="pill platform">${esc(title)}</span>` : "";
 }
 
 /* ---------- Overview ---------- */
@@ -138,7 +159,7 @@ async function renderOverview() {
     <div class="hero">
       <div>
         <h1>${total ? `已经拾回 ${total} 篇面经帖子` : "还没有抓取过帖子"}</h1>
-        <p>${o.unpacked_candidates ? `其中 ${o.unpacked_candidates} 篇疑似真实面经还没打包，可以去「帖子」里挑选。` : "从「抓取」开始，按关键词收集小红书上的真实面经。"}</p>
+        <p>${o.unpacked_candidates ? `其中 ${o.unpacked_candidates} 篇疑似真实面经还没打包，可以去「帖子」里挑选。` : "从「抓取」开始，按关键词收集小红书、抖音、B 站、快手、知乎和牛客上的真实面经。"}</p>
       </div>
       <div class="head-actions">
         ${o.unpacked_candidates ? `<a class="btn" href="#posts">查看待打包</a>` : ""}
@@ -147,7 +168,7 @@ async function renderOverview() {
     </div>
 
     <div class="grid stats">
-      ${statCard("帖子总数", total, `${o.stats.runs} 次抓取或导入`)}
+      ${statCard("帖子总数", total, platformSummary(o) || `${o.stats.runs} 次抓取或导入`)}
       ${statCard("疑似真实面经", labels.candidate || 0, "规则初筛结果", true)}
       ${statCard("待打包面经", o.unpacked_candidates, "还没交给题库")}
       ${statCard("已打包", o.stats.packed, o.stats.changed_after_pack ? `${o.stats.changed_after_pack} 篇打包后被修改` : "已生成素材包")}
@@ -195,6 +216,11 @@ async function renderOverview() {
   });
 }
 
+function platformSummary(o) {
+  const counts = o.stats.platforms || {};
+  return o.platforms.filter((p) => counts[p.id]).map((p) => `${p.title} ${counts[p.id]}`).join(" · ");
+}
+
 function statCard(label, value, hint, accent = false) {
   return `<div class="card stat${accent ? " accent" : ""}"><span class="label">${esc(label)}</span><span class="value">${esc(value)}</span><span class="hint">${esc(hint)}</span></div>`;
 }
@@ -206,7 +232,7 @@ function runRow(run) {
     <div class="list-row">
       <span class="pill dot ${esc(run.status)}">${esc(statusTitle)}</span>
       <div class="grow">
-        <div class="title">${esc(what)}</div>
+        <div class="title">${platformBadge(run.platform)}${esc(what)}</div>
         <div class="sub" title="${esc(run.message)}">${run.message ? esc(run.message) : `读到 ${run.records} 条，新增 ${run.new} 篇`}</div>
       </div>
       <span class="faint" title="${esc(fmtTime(run.started_at))}">${esc(fmtAgo(run.started_at))}</span>
@@ -220,7 +246,7 @@ async function renderCrawl() {
   if (state.crawl.keywords === null) state.crawl.keywords = [...o.config.keywords];
   $("#view-crawl").innerHTML = `
     <div class="view-head">
-      <div><h1>抓取</h1><p>调用本机的 MediaCrawler 抓取小红书帖子，结束后自动去重和初筛。</p></div>
+      <div><h1>抓取</h1><p>牛客由 Gleaner 直接读取公开帖子，其余平台调用本机的 MediaCrawler；结束后自动去重和初筛。</p></div>
     </div>
     <div class="crawl-grid">
       <div class="card" id="crawl-form"></div>
@@ -231,10 +257,15 @@ async function renderCrawl() {
   renderJob();
 }
 
+function perKeyword() {
+  const platform = platformOf(state.crawl.platform);
+  if (!platform.page_size) return state.crawl.count ?? platform.max_notes;
+  return state.crawl.pages * platform.page_size;
+}
+
 function plannedNotes() {
-  const o = state.overview;
   if (state.crawl.mode === "detail") return urlList().length;
-  return state.crawl.pages * o.config.page_size * state.crawl.keywords.length;
+  return perKeyword() * state.crawl.keywords.length;
 }
 
 function urlList() {
@@ -242,7 +273,26 @@ function urlList() {
 }
 
 function waitSeconds() {
-  return state.waitDeadline ? Math.max(0, Math.ceil((state.waitDeadline - Date.now()) / 1000)) : 0;
+  const deadline = state.waitDeadlines[state.crawl.platform];
+  return deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
+}
+
+function amountField(platform) {
+  const c = state.crawl;
+  if (!platform.page_size) {
+    const current = perKeyword();
+    const counts = [...new Set([...NOWCODER_COUNTS, platform.max_notes])].sort((a, b) => a - b);
+    return `
+      <div class="segmented">
+        ${counts.map((n) => `<button data-action="crawl-count" data-count="${n}" class="${current === n ? "active" : ""}">${n} 篇</button>`).join("")}
+      </div>`;
+  }
+  const maxPages = Math.max(1, Math.floor(state.overview.config.max_notes_cap / platform.page_size));
+  return `
+    <div class="segmented">
+      ${Array.from({ length: maxPages }, (_, i) => i + 1).map((p) => `
+        <button data-action="crawl-pages" data-pages="${p}" class="${c.pages === p ? "active" : ""}">${p} 页 · ${p * platform.page_size} 篇</button>`).join("")}
+    </div>`;
 }
 
 function renderCrawlForm() {
@@ -250,9 +300,15 @@ function renderCrawlForm() {
   if (!el) return;
   const c = state.crawl;
   const o = state.overview;
-  const maxPages = Math.max(1, Math.floor(o.config.max_notes_cap / o.config.page_size));
+  const platform = platformOf(c.platform);
   el.innerHTML = `
     <h2>新的抓取</h2>
+    <div class="field">
+      <span class="label">平台</span>
+      <div class="segmented platforms">
+        ${o.platforms.map((p) => `<button data-action="crawl-platform" data-platform="${esc(p.id)}" class="${p.id === platform.id ? "active" : ""}">${esc(p.title)}</button>`).join("")}
+      </div>
+    </div>
     <div class="field">
       <div class="segmented" role="tablist">
         <button data-action="crawl-mode" data-mode="search" class="${c.mode === "search" ? "active" : ""}">关键词搜索</button>
@@ -266,20 +322,17 @@ function renderCrawlForm() {
           ${c.keywords.map((k, i) => `<span class="chip">${esc(k)}<button data-action="remove-keyword" data-index="${i}" aria-label="删除">✕</button></span>`).join("")}
           <input type="text" id="keyword-input" placeholder="${c.keywords.length ? "继续添加，回车确认" : "例如：后端 面经，回车确认"}">
         </div>
-        <span class="help">每个关键词单独搜索；关键词里不能有逗号。</span>
+        <span class="help">${platform.page_size ? "每个关键词单独搜索；关键词里不能有逗号。" : "关键词里的每个词都要出现在标题或摘要里，例如「字节 后端」。"}</span>
       </div>
       <div class="field">
         <span class="label">每个关键词抓多少</span>
-        <div class="segmented">
-          ${Array.from({ length: maxPages }, (_, i) => i + 1).map((p) => `
-            <button data-action="crawl-pages" data-pages="${p}" class="${c.pages === p ? "active" : ""}">${p} 页 · ${p * o.config.page_size} 篇</button>`).join("")}
-        </div>
-        <span class="help">小红书搜索按页返回，每页 ${o.config.page_size} 篇。</span>
+        ${amountField(platform)}
+        <span class="help">${esc(platform.hint)}</span>
       </div>
     ` : `
       <div class="field">
         <span class="label">帖子链接</span>
-        <textarea id="url-input" placeholder="每行一个链接，需要带 xsec_token，从浏览器地址栏复制">${esc(c.urls)}</textarea>
+        <textarea id="url-input" placeholder="${esc(URL_HINTS[platform.id] || "每行一个链接")}">${esc(c.urls)}</textarea>
       </div>
     `}
     <div class="plan"><span>本次最多约</span><strong id="plan-count">${plannedNotes()} 篇</strong></div>
@@ -303,7 +356,8 @@ function updateStartButton() {
   const note = $("#wait-note");
   if (wait > 0 && !running) {
     note.hidden = false;
-    note.textContent = `距离上次抓取不到 ${state.overview.config.min_interval_minutes} 分钟，还需等待 ${fmtDuration(wait)}`;
+    const platform = platformOf(state.crawl.platform);
+    note.textContent = `距离上次抓取${platform.title}不到 ${platform.min_interval_minutes} 分钟，还需等待 ${fmtDuration(wait)}`;
   } else {
     note.hidden = true;
   }
@@ -321,8 +375,9 @@ function addKeyword(raw) {
 async function startCrawl() {
   const c = state.crawl;
   const body = c.mode === "search"
-    ? { keywords: c.keywords, max_notes: c.pages * state.overview.config.page_size, force: c.force }
-    : { urls: urlList(), force: c.force };
+    ? { platform: c.platform, keywords: c.keywords, max_notes: perKeyword(), force: c.force }
+    : { platform: c.platform, urls: urlList(), force: c.force };
+  const engine = platformOf(c.platform).engine;
   try {
     const data = await api("/api/crawl", { method: "POST", body });
     state.job = data.job;
@@ -333,7 +388,7 @@ async function startCrawl() {
     if (log) log.innerHTML = "";
     renderJob();
     startPolling();
-    toast("已开始抓取，留意弹出的 Chrome 窗口");
+    toast(engine === "nowcoder" ? "已开始抓取" : "已开始抓取，留意弹出的 Chrome 窗口");
   } catch (error) {
     toast(error.message, { error: true });
   }
@@ -397,7 +452,7 @@ function stopPolling() {
 const MAX_LOG_LINES = 1500;
 
 function logLineHtml(line) {
-  const cls = /ERROR|Traceback|Error:|失败/.test(line) ? "line err" : /Login|login|search Xiaohongshu keyword|下载完成|扫码/.test(line) ? "line hl" : "line";
+  const cls = /ERROR|Traceback|Error:|失败/.test(line) ? "line err" : /Login|login|search \w+ keyword|下载完成|扫码|已保存帖子/.test(line) ? "line hl" : "line";
   return `<div class="${cls}">${esc(line)}</div>`;
 }
 
@@ -424,13 +479,14 @@ function renderJob() {
         <div class="big">🌾</div>
         <h2>还没有进行中的抓取</h2>
         <p class="muted">开始后，这里会显示进度、需要你操作的提示（扫码、验证码）和实时日志。<br>
-        MediaCrawler 会弹出一个独立的 Chrome 窗口，登录状态保存在本机。</p>
+        MediaCrawler 会弹出一个独立的 Chrome 窗口，登录状态保存在本机；牛客不需要浏览器和登录。</p>
       </div>`;
     return;
   }
   const p = job.progress;
-  const steps = state.overview.steps;
-  const currentIndex = steps.findIndex((s) => s.id === p.step);
+  const steps = p.steps;
+  const currentIndex = steps.findIndex((s) => s.name === p.step);
+  const platformTitle = platformOf(job.params.platform || "xhs").title;
   const finished = job.state !== "running";
   const stateTitle = { running: "进行中", ok: "完成", degraded: "部分完成", failed: "失败", stopped: "已停止" }[job.state];
   const elapsed = ((job.finished_at ? new Date(job.finished_at) : new Date()) - new Date(job.started_at)) / 1000;
@@ -442,7 +498,7 @@ function renderJob() {
   const keepLog = $("#crawl-log");
   el.innerHTML = `
     <div class="card-head">
-      <h2>${esc(what)}</h2>
+      <h2>${platformBadge(platformTitle)}${esc(what)}</h2>
       <span class="pill dot ${esc(job.state)}">${esc(stateTitle)}</span>
     </div>
     <div class="steps">
@@ -452,11 +508,11 @@ function renderJob() {
         </div>`).join("")}
     </div>
     ${!finished && p.attention ? `
-      <div class="attention"><span class="icon">${p.attention === "qr" ? "📱" : "⚠️"}</span><span>${esc(p.attention_title)}</span>
+      <div class="attention"><span class="icon">${p.attention === "qr" ? "📱" : p.attention === "throttled" ? "⏳" : "⚠️"}</span><span>${esc(p.attention_title)}</span>
       ${qrLeft != null ? `<span class="count" id="qr-count">${fmtDuration(qrLeft)}</span>` : ""}</div>` : ""}
     <div class="job-meta">
       <span>已保存帖子 <b>${p.notes}</b></span>
-      <span>已下载图片 <b>${p.media}</b></span>
+      ${steps.some((s) => s.name === "download") ? `<span>已下载图片 <b>${p.media}</b></span>` : ""}
       <span>用时 <b id="elapsed">${fmtDuration(elapsed)}</b></span>
       <span>最多约 <b>${job.params.planned_notes}</b> 篇</span>
     </div>
@@ -496,6 +552,7 @@ async function renderPosts() {
   const f = state.posts;
   const params = new URLSearchParams();
   if (f.label) params.set("label", f.label);
+  if (f.platform) params.set("platform", f.platform);
   if (f.packed) params.set("packed", f.packed);
   if (f.q) params.set("q", f.q);
   const data = await api(`/api/posts?${params}`);
@@ -514,7 +571,7 @@ async function renderPosts() {
     </div>
     <div class="toolbar">
       <div class="filter">
-        <button data-action="filter-label" data-label="" class="${!f.label ? "active" : ""}">全部<span class="n">${data.total}</span></button>
+        <button data-action="filter-label" data-label="" class="${!f.label ? "active" : ""}">全部<span class="n">${f.platform ? data.platforms.find((p) => p.id === f.platform)?.count || 0 : data.total}</span></button>
         ${LABEL_ORDER.map((id) => `<button data-action="filter-label" data-label="${id}" class="${f.label === id ? "active" : ""}">${esc(labelTitle(id))}<span class="n">${data.counts[id] || 0}</span></button>`).join("")}
       </div>
       <span class="spacer"></span>
@@ -525,6 +582,13 @@ async function renderPosts() {
       </div>
       <input type="search" id="post-search" placeholder="搜索标题、正文、话题" value="${esc(f.q)}">
     </div>
+    ${data.platforms.length > 1 || f.platform ? `
+      <div class="toolbar">
+        <div class="filter">
+          <button data-action="filter-platform" data-platform="" class="${!f.platform ? "active" : ""}">全部平台</button>
+          ${data.platforms.map((p) => `<button data-action="filter-platform" data-platform="${esc(p.id)}" class="${f.platform === p.id ? "active" : ""}">${esc(p.title)}<span class="n">${p.count}</span></button>`).join("")}
+        </div>
+      </div>` : ""}
     ${data.posts.length ? `<div class="posts">${data.posts.map(postCard).join("")}</div>` : `<div class="card empty">没有符合条件的帖子</div>`}`;
   if (searchHadFocus) {
     const input = $("#post-search");
@@ -544,7 +608,7 @@ function postCard(p) {
       <div class="content">
         <div class="title">${esc(p.title)}</div>
         <div class="badges"><span class="pill ${esc(p.label || "")}">${esc(p.label_title)}</span>${p.kind === "video" ? `<span class="pill">视频</span>` : intake}</div>
-        <div class="meta"><span>${esc(p.source_date || "日期未知")}</span>${p.likes != null ? `<span>♥ ${p.likes}</span>` : ""}</div>
+        <div class="meta"><span>${esc(p.platform_title)}</span><span>${esc(p.source_date || "日期未知")}</span>${p.likes != null ? `<span>♥ ${p.likes}</span>` : ""}</div>
       </div>
     </article>`;
 }
@@ -561,7 +625,7 @@ async function openPost(key) {
   try {
     const { post } = await api(`/api/post?key=${encodeURIComponent(key)}`);
     const reasons = post.label_reasons.map((r) => `<span>${esc(r)}</span>`).join("");
-    const metrics = Object.entries(post.metrics || {}).map(([k, v]) => `${{ liked_count: "赞", collected_count: "收藏", comment_count: "评论", share_count: "分享" }[k] || k} ${v}`).join(" · ");
+    const metrics = Object.entries(post.metrics || {}).map(([k, v]) => `${METRIC_TITLES[k] || k} ${v}`).join(" · ");
     const imageCount = post.images.length;
     const intake = post.kind === "video"
       ? "视频帖：打包时只导入正文，视频不打包。"
@@ -582,6 +646,7 @@ async function openPost(key) {
       <div class="body-text">${esc(body || "（正文为空）")}</div>
       <div class="section-title">信息</div>
       <dl class="kv">
+        <dt>平台</dt><dd>${esc(post.platform_title)}</dd>
         <dt>发布日期</dt><dd>${esc(post.source_date || "未知")}</dd>
         <dt>搜索关键词</dt><dd>${esc(post.keywords.join("、") || "无")}</dd>
         <dt>话题</dt><dd>${esc(post.tags.join("、") || "无")}</dd>
@@ -1008,6 +1073,7 @@ document.addEventListener("click", (event) => {
     "close-drawer": closeDrawer,
     "filter-label": () => { state.posts.label = target.dataset.label; renderPosts(); },
     "filter-packed": () => { state.posts.packed = target.dataset.packed; renderPosts(); },
+    "filter-platform": () => { state.posts.platform = target.dataset.platform; renderPosts(); },
     "select-all": () => { state.posts.data.posts.filter((p) => !p.packed_in).forEach((p) => state.selected.add(p.key)); renderPosts(); },
     "clear-selection": () => { state.selected.clear(); renderPosts(); },
     "pack-selected": packSelected,
@@ -1023,6 +1089,13 @@ document.addEventListener("click", (event) => {
     "copy": () => copy(target.dataset.text),
     "crawl-mode": () => { state.crawl.mode = target.dataset.mode; renderCrawlForm(); },
     "crawl-pages": () => { state.crawl.pages = Number(target.dataset.pages); renderCrawlForm(); },
+    "crawl-count": () => { state.crawl.count = Number(target.dataset.count); renderCrawlForm(); },
+    "crawl-platform": () => {
+      state.crawl.platform = target.dataset.platform;
+      state.crawl.pages = 1;
+      state.crawl.count = null;
+      renderCrawlForm();
+    },
     "remove-keyword": () => { state.crawl.keywords.splice(Number(target.dataset.index), 1); renderCrawlForm(); },
     "start-crawl": startCrawl,
     "stop-crawl": async () => {

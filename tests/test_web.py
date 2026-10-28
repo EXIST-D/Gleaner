@@ -10,10 +10,11 @@ from pathlib import Path
 from gleaner.config import load_config
 from gleaner.errors import GleanerError
 from gleaner.pipeline import import_export
+from gleaner.sources.base import FetchResult
 from gleaner.store import Store
 from gleaner.web.jobs import CrawlJobs
 from gleaner.web.server import TOKEN_PLACEHOLDER, WebApp, WebServer
-from tests.support import NOW, WorkspaceTestCase, write_export
+from tests.support import NOW, NOWCODER_DISCUSS, WorkspaceTestCase, write_export, write_records
 
 FAKE_MEDIACRAWLER = r"""
 import json, sys, time
@@ -105,10 +106,18 @@ class WebAppTest(WorkspaceTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(data["stats"]["posts"], 4)
         self.assertEqual(data["unpacked_candidates"], 3)
-        self.assertEqual(data["config"]["page_size"], 20)
-        self.assertEqual([step["id"] for step in data["steps"]][0], "browser")
+        platforms = {p["id"]: p for p in data["platforms"]}
+        self.assertEqual(list(platforms), ["xhs", "dy", "bili", "ks", "zhihu", "nowcoder"])
+        self.assertEqual((platforms["xhs"]["page_size"], platforms["dy"]["page_size"]), (20, 10))
+        self.assertIsNone(platforms["nowcoder"]["page_size"])
+        self.assertEqual(platforms["nowcoder"]["engine"], "nowcoder")
+        self.assertEqual(platforms["xhs"]["steps"][0]["name"], "browser")
+        self.assertEqual(platforms["nowcoder"]["steps"][0]["title"], "翻阅面经列表")
+        self.assertNotIn("download", [step["name"] for step in platforms["bili"]["steps"]])
+        self.assertEqual(platforms["xhs"]["next_crawl_in"], 0)
+        self.assertEqual(data["stats"]["platforms"], {"xhs": 4})
         self.assertTrue(any(check["name"] == "mediacrawler" and check["ok"] for check in data["checks"]))
-        self.assertEqual(data["runs"][0]["mode"], "import")
+        self.assertEqual((data["runs"][0]["mode"], data["runs"][0]["platform"]), ("import", "小红书"))
 
     def test_posts_filters_counts_and_intake(self):
         _, data = self.get("/api/posts?label=candidate&packed=no")
@@ -119,6 +128,20 @@ class WebAppTest(WorkspaceTestCase):
         self.assertTrue(image_post["thumb"].startswith("/media/runs/"))
         _, found = self.get("/api/posts?q=java")
         self.assertEqual([p["key"] for p in found["posts"]], ["xhs:cc03"])
+        self.assertEqual(image_post["platform_title"], "小红书")
+
+    def test_posts_filter_by_platform(self):
+        source = write_records(self.workspace / "export2", "nowcoder", [NOWCODER_DISCUSS])
+        with Store.open(self.ws) as store:
+            import_export(store, load_config(self.ws), source, now=NOW)
+        _, data = self.get("/api/posts?platform=nowcoder")
+        self.assertEqual([p["key"] for p in data["posts"]], ["nowcoder:800000001"])
+        self.assertEqual(data["counts"]["candidate"], 1)
+        self.assertEqual(
+            data["platforms"],
+            [{"id": "xhs", "title": "小红书", "count": 4}, {"id": "nowcoder", "title": "牛客", "count": 1}],
+        )
+        self.assertEqual(len(self.get("/api/posts?platform=")[1]["posts"]), 5)
 
     def test_post_detail_and_media(self):
         _, data = self.get("/api/post?key=xhs:aa01")
@@ -157,6 +180,9 @@ class WebAppTest(WorkspaceTestCase):
         self.assertIn("至少", self.post("/api/crawl", {"keywords": []})[1]["error"])
         self.assertIn("逗号", self.post("/api/crawl", {"keywords": ["后端,面经"]})[1]["error"])
         self.assertIn("整数", self.post("/api/crawl", {"keywords": ["后端"], "max_notes": "20"})[1]["error"])
+        self.assertIn(
+            "不支持", self.post("/api/crawl", {"platform": "weibo", "keywords": ["后端"]})[1]["error"]
+        )
         self.assertIsNone(self.get("/api/crawl")[1]["job"])
 
 
@@ -206,6 +232,41 @@ class CrawlJobTest(WorkspaceTestCase):
         self.assertTrue(self.jobs.stop())
         self.jobs.wait(20)
         self.assertEqual(job.snapshot()["state"], "stopped")
+
+    def test_nowcoder_crawl_uses_the_job_hooks(self):
+        seen = {}
+
+        class FakeFetcher:
+            def __init__(self, on_line, should_stop):
+                self.on_line, self.should_stop = on_line, should_stop
+
+            def problems(self):
+                return []
+
+            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+                seen["max_notes"] = max_notes
+                self.on_line("[nowcoder] 翻阅最新面经列表第 1 页")
+                write_records(output_dir, "nowcoder", [NOWCODER_DISCUSS])
+                self.on_line("[nowcoder] 已保存帖子 800000001：示例")
+                seen["stop"] = self.should_stop()
+                return FetchResult("ok", output_dir)
+
+        def factory(config, platform, *, runner, on_line, should_stop):
+            seen["platform"] = platform
+            return FakeFetcher(on_line, should_stop)
+
+        jobs = CrawlJobs(self.ws, fetcher_factory=factory)
+        job = jobs.start(platform="nowcoder", keywords=["后端 面经"], targets=[], max_notes=7, force=False)
+        jobs.wait(20)
+        snapshot = job.snapshot()
+        self.assertEqual(snapshot["state"], "ok", snapshot)
+        self.assertEqual(seen, {"platform": "nowcoder", "max_notes": 7, "stop": False})
+        self.assertEqual((job.params["platform"], job.params["planned_notes"]), ("nowcoder", 7))
+        self.assertEqual(snapshot["progress"]["notes"], 1)
+        self.assertEqual(snapshot["progress"]["steps"][0]["name"], "search")
+        with Store.open(self.ws) as store:
+            self.assertIsNotNone(store.get("nowcoder:800000001"))
+            self.assertEqual(store.runs()[0].source, "nowcoder")
 
 
 class ServerTest(WorkspaceTestCase):

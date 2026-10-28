@@ -20,7 +20,6 @@ BANK_MEDIA = re.compile(r"^[0-9a-f]{64}\.(?:webp|jpe?g|png|gif)$")
 EXPORT_BASENAME = "采集题库报告"
 QUESTION_SUFFIX = "（题目版）"
 _UNSAFE_FILENAME = re.compile(r'[\\/:*?"<>|\s]+')
-XHS_NOTE = re.compile(r"^https?://(?:www\.)?xiaohongshu\.com/explore/([0-9a-zA-Z]+)$")
 
 QUESTION_TYPES = {
     "concept": "概念",
@@ -204,12 +203,6 @@ def export_name(*, company: str | None, title: str) -> str:
     """采集题库报告[-公司][-领域], safe as a file name on every platform."""
     parts = [EXPORT_BASENAME, *(part for part in (company, title) if part)]
     return "-".join(_UNSAFE_FILENAME.sub("_", part).strip("_.") or "_" for part in parts)
-
-
-def note_key(source_url: str | None) -> str | None:
-    """The Gleaner post key for a Xiaohongshu source URL."""
-    match = XHS_NOTE.match(source_url or "")
-    return f"xhs:{match.group(1)}" if match else None
 
 
 def topic_of(domains: list[str], labels: dict[str, dict]) -> tuple[str, str]:

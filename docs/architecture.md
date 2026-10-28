@@ -6,23 +6,43 @@
 |---|---|
 | `cli.py` | 命令行入口；预期内的错误打印一行中文提示，`--json` 输出机器可读结果 |
 | `config.py` | 读取并校验 `gleaner.toml`；模板在 `templates/gleaner.toml` |
-| `sources/mediacrawler.py` | 拼装 MediaCrawler 命令、运行子进程、记录日志、把失败归为“降级” |
-| `adapters/xhs.py` | 把 MediaCrawler 小红书导出转成 `Post`；复制外部导出目录 |
+| `sources/base.py` | `Fetcher` 接口（`problems()`、`run()`）与 `FetchResult` |
+| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体）、运行子进程、记录日志、把失败归为“降级” |
+| `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；限速、重试、识别拦截 |
+| `adapters/exports.py` | 各平台导出的数据目录与图片目录对照；读取运行目录里的全部帖子；复制外部导出目录 |
+| `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片、解析“1.2万”这类计数、话题标签 |
+| `adapters/<平台>.py` | `xhs`、`douyin`、`bilibili`、`kuaishou`、`zhihu`、`nowcoder`：把一条原始记录转成 `Post` |
+| `urls.py` | 各平台的稳定链接、去掉会话和分享参数、从链接反查帖子键 |
 | `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本 |
 | `screening.py` | 可解释的规则初筛 |
-| `pipeline.py` | 编排：抓取 → 导入 → 初筛；抓取间隔限制 |
+| `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数和抓取间隔 |
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor` 和网页共用 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
-| `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止 |
-| `web/progress.py` | 从 MediaCrawler 日志识别当前步骤和需要人操作的提示（扫码、验证、确认框） |
+| `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止（MediaCrawler 结束子进程，牛客在下一个请求前停下） |
+| `web/progress.py` | 按平台给出步骤，从日志识别当前步骤和需要人操作的提示（扫码、验证、确认框、牛客限流等待） |
 | `web/static/` | 原生 HTML/CSS/JS 前端，无构建步骤 |
 
 依赖方向是单向的：`cli / web → pipeline / packer → sources / adapters / screening → store / models`。
-网页控制台和命令行调用同一组函数（`crawl_xhs`、`build_pack`、`environment_checks`），所以两边的限制和结果一致。
-来源相关的细节（命令行参数、导出字段）只出现在 `sources/` 和 `adapters/` 里，MediaCrawler 改版时只改这两处。
+网页控制台和命令行调用同一组函数（`crawl`、`fetcher_for`、`build_pack`、`environment_checks`），所以两边的限制和结果一致。
+来源相关的细节（命令行参数、接口地址、导出字段）只出现在 `sources/` 和 `adapters/` 里，来源改版时只改这两处
+（再加上 `web/progress.py` 里的日志标记）。
+
+## 平台
+
+| 代码 | 平台 | 抓取器 | 运行记录的 `source` | 帖子 ID |
+|---|---|---|---|---|
+| `xhs` | 小红书 | MediaCrawler | `mediacrawler-xhs` | 笔记 ID |
+| `dy` | 抖音 | MediaCrawler | `mediacrawler-dy` | aweme ID |
+| `bili` | B站 | MediaCrawler | `mediacrawler-bili` | av 号（数字） |
+| `ks` | 快手 | MediaCrawler | `mediacrawler-ks` | 作品 ID |
+| `zhihu` | 知乎 | MediaCrawler | `mediacrawler-zhihu` | `answer-…`、`article-…`、`zvideo-…`（三类 ID 各自编号，会重复） |
+| `nowcoder` | 牛客 | `sources/nowcoder.py` | `nowcoder` | 讨论帖数字 ID，或动态的 32 位 UUID（小写） |
+
+抓取间隔和关键词进度都按 `source` 分开：刚抓过小红书，不影响马上抓牛客。
+导入已有目录时，只含一个平台的记为该平台的 `source`，含多个平台的记为 `mediacrawler`，参数里列出平台。
 
 ## 关键决定
 
@@ -58,6 +78,17 @@ Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的
 **会话参数不离开本机。** 小红书链接里的 `xsec_token` 和登录会话有关。`url` 字段去掉了它和其他分享参数，
 用于去重和交接；原样的 `open_url` 只保存在本机数据库里，方便自己打开原帖。
 
+**牛客不用站内搜索。** 牛客的 robots.txt 不允许 `/search`。读取器翻阅最新面经列表、在标题和摘要里本地匹配关键词，
+只读取命中的帖子详情。代价是只能找到最近的帖子，适合经常小批量抓；旧帖子用 `--url` 指定。
+请求一次一个、有固定间隔和抖动，429 按 `Retry-After` 等待，遇到验证页就停下并记为降级，而不是换着法子绕过。
+原始记录去掉作者资料和 IP 属地，只留作者 ID 的哈希。
+
+**视频只用文字。** B 站、快手、知乎视频不下载媒体（`--get_media no`），只导入标题、简介或文案；
+抖音和小红书需要下载图文帖的图片，MediaCrawler 的同一个开关也会下载视频，Gleaner 不读取它们，打包时也不带。
+
+**输出布局统一成 MediaCrawler 的样子。** 牛客读取器写出 `raw/nowcoder/jsonl/*.jsonl` 和 `raw/nowcoder/media/<ID>/001.jpg`，
+所以导入、`gleaner import` 和图片查找对所有平台走同一套代码（`adapters/exports.py`）。
+
 ## 数据库
 
 `gleaner.db` 由 `store.py` 管理，`meta.schema_version` 记录版本，打开更新版本创建的工作区会直接拒绝。
@@ -70,7 +101,10 @@ Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的
 
 ## 扩展新来源
 
-1. 在 `sources/` 下实现抓取，返回 `FetchResult`，失败时返回 `degraded` 而不是抛异常。
-2. 在 `adapters/` 下把原始输出转成 `Post`，`url` 必须是去掉会话参数后的稳定链接。
-3. 在 `models.PLATFORMS` 登记平台名称。
-4. 在 `pipeline.py` 增加编排函数，在 `cli.py` 增加子命令；测试用合成数据，不提交真实帖子。
+1. 在 `models.PLATFORMS` 登记平台代码和名称，在 `urls.py` 增加稳定链接的生成和反查。
+2. 在 `adapters/` 下把一条原始记录转成 `Post`，`url` 必须是去掉会话参数后的稳定链接；在 `adapters/exports.py` 登记数据目录和图片目录。
+3. MediaCrawler 已支持的平台：在 `sources/mediacrawler.PLATFORMS` 登记分页大小和是否下载媒体。
+   其他来源：在 `sources/` 下实现 `Fetcher`，按上面的布局写出原始记录，失败时返回 `degraded` 而不是抛异常；
+   在 `pipeline.fetcher_for`、`source_name` 里接上。
+4. 在 `web/progress.py` 给出步骤和日志标记，在 `web/server.py` 的 `_HINTS` 写一句抓取说明。
+5. 测试用合成数据，不提交真实帖子。

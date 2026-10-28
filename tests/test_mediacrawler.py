@@ -10,7 +10,7 @@ from gleaner.sources.mediacrawler import (
     diagnose,
     search_notes_per_keyword,
 )
-from tests.support import WorkspaceTestCase, write_export
+from tests.support import DOUYIN_VIDEO, WorkspaceTestCase, write_export, write_records
 
 
 class BuildCommandTest(unittest.TestCase):
@@ -40,6 +40,31 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(search_notes_per_keyword(20), 20)
         self.assertEqual(search_notes_per_keyword(39), 20)
         self.assertEqual(search_notes_per_keyword(40), 40)
+        self.assertEqual(search_notes_per_keyword(5, 10), 10)
+        self.assertEqual(search_notes_per_keyword(35, 10), 30)
+
+    def test_platforms_only_download_media_for_image_posts(self):
+        def pairs(platform):
+            command = build_command(
+                MediaCrawlerConfig(),
+                platform=platform,
+                mode="search",
+                output_dir=Path("/w"),
+                keywords=["a"],
+                max_notes=10,
+            )
+            return dict(zip(command[3::2], command[4::2], strict=True))
+
+        self.assertEqual(pairs("dy")["--platform"], "dy")
+        self.assertEqual(pairs("dy")["--get_media"], "yes")
+        for platform in ("bili", "ks", "zhihu"):
+            self.assertEqual(
+                (pairs(platform)["--platform"], pairs(platform)["--get_media"]), (platform, "no")
+            )
+        with self.assertRaises(KeyError):
+            pairs("nowcoder")
+        with self.assertRaises(ValueError):
+            MediaCrawlerDriver(MediaCrawlerConfig(), platform="nowcoder")
 
     def test_detail_uses_specified_ids(self):
         command = build_command(
@@ -134,6 +159,16 @@ class DriverTest(WorkspaceTestCase):
         result = self.run_driver(lambda: 0)
         self.assertEqual(result.status, "degraded")
         self.assertIn("没有产出数据", result.message)
+
+    def test_output_is_checked_in_the_platform_directory(self):
+        driver = MediaCrawlerDriver(self.config, lambda *args: write_export(self.raw) and 0, platform="dy")
+        result = driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["a"])
+        self.assertIn("没有产出数据", result.message)
+        driver = MediaCrawlerDriver(
+            self.config, lambda *args: write_records(self.raw, "douyin", [DOUYIN_VIDEO]) and 0, platform="dy"
+        )
+        result = driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["a"])
+        self.assertTrue(result.ok, result.message)
 
     def test_timeout_is_degraded(self):
         def timeout():

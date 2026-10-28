@@ -22,21 +22,27 @@ from gleaner.bank import (
     QUESTION_TYPES,
     ROUNDS,
     BankReader,
-    note_key,
     topic_of,
 )
 from gleaner.bodytext import choose_intake, listed_questions
 from gleaner.checks import environment_checks
-from gleaner.config import MAX_NOTES_CAP, load_config
+from gleaner.config import MAX_NOTES_CAP, Config, load_config
 from gleaner.errors import GleanerError
-from gleaner.models import LABEL_TITLES, LABELS, PostRecord
+from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
 from gleaner.packer import build_pack
-from gleaner.pipeline import seconds_until_next_crawl
-from gleaner.sources.mediacrawler import SEARCH_PAGE_SIZE
+from gleaner.pipeline import (
+    CRAWL_PLATFORMS,
+    default_max_notes,
+    min_interval_minutes,
+    page_size,
+    platform_of,
+    seconds_until_next_crawl,
+)
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
+from gleaner.urls import post_key
 from gleaner.web.jobs import CrawlJobs
-from gleaner.web.progress import STEP_TITLES, STEPS
+from gleaner.web.progress import step_titles, steps_for
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -251,7 +257,7 @@ class WebApp:
             known = {
                 key
                 for source in sources.values()
-                if (key := note_key(source.get("source_url"))) and store.get(key) is not None
+                if (key := post_key(source.get("source_url") or "")) and store.get(key) is not None
             }
 
         occurrences = []
@@ -259,7 +265,7 @@ class WebApp:
             source = sources.get(occurrence.get("source_id"), {})
             parent = occurrence_owner.get(occurrence.get("parent_occurrence_id") or "")
             media = Path(source.get("path") or "").name
-            key = note_key(source.get("source_url"))
+            key = post_key(source.get("source_url") or "")
             occurrences.append(
                 {
                     "original_text": occurrence.get("original_text", ""),
@@ -313,7 +319,7 @@ class WebApp:
             runs = store.runs(limit=8)
             checkpoints = store.checkpoints()
             unpacked = len(store.posts(labels=["candidate"], packed=False))
-            wait = seconds_until_next_crawl(store, config, now)
+            platforms = [_platform_option(store, config, code, now) for code in CRAWL_PLATFORMS]
         job = self.jobs.current
         return {
             "version": __version__,
@@ -328,6 +334,7 @@ class WebApp:
             "runs": [
                 {
                     "id": run.id,
+                    "platform": _platform_label(run.params.get("platform") or platform_of(run.source) or ""),
                     "mode": run.mode,
                     "status": run.status,
                     "message": _first_line(run.message),
@@ -342,30 +349,32 @@ class WebApp:
             "checks": [check.as_dict() for check in environment_checks(config)],
             "config": {
                 "keywords": list(config.keywords),
-                "max_notes": config.mediacrawler.max_notes,
                 "max_notes_cap": MAX_NOTES_CAP,
-                "page_size": SEARCH_PAGE_SIZE,
-                "min_interval_minutes": config.mediacrawler.min_interval_minutes,
             },
-            "next_crawl_in": wait,
-            "steps": [{"id": step, "title": STEP_TITLES[step]} for step in STEPS],
+            "platforms": platforms,
             "job": {"id": job.id, "state": job.state} if job else None,
         }
 
     def posts(self, query: dict) -> dict:
         labels = [label for label in query.get("label", "").split(",") if label in LABELS] or None
+        platform = query.get("platform", "")
         packed = {"yes": True, "no": False}.get(query.get("packed", ""))
         text = query.get("q", "").strip().lower()
         with Store.open(self.workspace) as store:
             everything = store.posts(packed=packed)
         counts = {label: 0 for label in LABELS}
+        platforms: dict[str, int] = {}
         for record in everything:
+            platforms[record.post.platform] = platforms.get(record.post.platform, 0) + 1
+            if platform and record.post.platform != platform:
+                continue
             if record.label in counts:
                 counts[record.label] += 1
         selected = [
             record
             for record in everything
             if (labels is None or record.label in labels)
+            and (not platform or record.post.platform == platform)
             and (
                 not text
                 or text in f"{record.post.title}\n{record.post.body}\n{' '.join(record.post.tags)}".lower()
@@ -374,6 +383,10 @@ class WebApp:
         return {
             "total": len(everything),
             "counts": counts,
+            "platforms": [
+                {"id": code, "title": _platform_label(code), "count": count}
+                for code, count in sorted(platforms.items(), key=lambda pair: _platform_order(pair[0]))
+            ],
             "posts": [self._brief(record) for record in selected],
         }
 
@@ -460,6 +473,7 @@ class WebApp:
     def _post(self, path: str, payload: dict) -> Response:
         if path == "/api/crawl":
             job = self.jobs.start(
+                platform=str(payload.get("platform") or "xhs"),
                 keywords=_strings(payload.get("keywords")),
                 targets=_strings(payload.get("urls")),
                 max_notes=_optional_int(payload.get("max_notes")),
@@ -508,6 +522,8 @@ class WebApp:
         local = [path for path in post.images if (self.workspace / path).is_file()]
         return {
             "key": post.key,
+            "platform": post.platform,
+            "platform_title": _platform_label(post.platform),
             "title": post.title,
             "kind": post.kind,
             "source_date": china_date(post.published_at),
@@ -522,6 +538,42 @@ class WebApp:
             "packed_in": record.packed_in,
             "excerpt": post.body[:90],
         }
+
+
+_HINTS = {
+    "xhs": "小红书搜索按页返回，每页 {page} 篇；第一次需要扫码登录，帖子图片会下载下来看图导入。",
+    "dy": "抖音搜索每页 {page} 篇；图文帖下载图片，视频帖只导入文案（MediaCrawler 会顺带下载封面和整段视频）。",
+    "bili": "B 站搜索每页 {page} 个视频；只导入标题和简介，不下载视频。",
+    "ks": "快手搜索每页 {page} 个视频；只导入标题文案，不下载视频。",
+    "zhihu": "知乎搜索每页 {page} 条（回答、文章、视频）；导入纯文字正文。",
+    "nowcoder": "不登录、不使用站内搜索：翻阅最新面经列表（最多 {scan} 页，每页 20 篇），"
+    "保存标题或摘要里包含关键词全部词语的帖子，按篇数保存。",
+}
+
+
+def _platform_option(store: Store, config: Config, code: str, now) -> dict:
+    size = page_size(code)
+    titles = step_titles(code)
+    steps = steps_for(code, download=config.nowcoder.download_images)
+    return {
+        "id": code,
+        "title": _platform_label(code),
+        "page_size": size,
+        "max_notes": default_max_notes(config, code),
+        "min_interval_minutes": min_interval_minutes(config, code),
+        "next_crawl_in": seconds_until_next_crawl(store, config, now, platform=code),
+        "engine": "nowcoder" if code == "nowcoder" else "mediacrawler",
+        "steps": [{"name": step, "title": titles[step]} for step in steps],
+        "hint": _HINTS[code].format(page=size, scan=config.nowcoder.scan_pages),
+    }
+
+
+def _platform_label(code: str) -> str:
+    return PLATFORMS[code].label if code in PLATFORMS else code
+
+
+def _platform_order(code: str) -> int:
+    return list(PLATFORMS).index(code) if code in PLATFORMS else len(PLATFORMS)
 
 
 def _question_brief(row: dict, labels: dict[str, dict]) -> dict:

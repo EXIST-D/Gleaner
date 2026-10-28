@@ -53,5 +53,64 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual(progress.as_dict()["step_title"], "完成")
 
 
+class PlatformProgressTest(unittest.TestCase):
+    def feed(self, platform, lines, **kwargs):
+        progress = Progress(platform, **kwargs)
+        for line in lines:
+            progress.feed(line)
+        return progress
+
+    def test_douyin_asks_for_a_scan_without_a_countdown(self):
+        progress = self.feed("dy", ["[DouYinLogin.login_by_qrcode] Begin login douyin by qrcode..."])
+        self.assertEqual((progress.step, progress.attention, progress.qr_seconds), ("login", "qr", None))
+        self.assertIn("抖音", progress.as_dict()["attention_title"])
+        progress.feed("[DouYinLogin.check_page_display_slider] slider verify failed, retry ...")
+        self.assertEqual(progress.attention, "verify")
+        progress.feed("[DouYinCrawler.search] search douyin keyword: 测开, page: 0")
+        progress.feed("[store.douyin.update_douyin_aweme] douyin aweme id:1, title:x")
+        self.assertEqual((progress.step, progress.notes, progress.attention), ("search", 1, None))
+
+    def test_bilibili_countdown_and_no_download_step(self):
+        progress = self.feed(
+            "bili",
+            [
+                "[BilibiliLogin.login_by_qrcode] Waiting for scan code login, remaining time is 20s",
+                "[BilibiliLogin.login_by_qrcode] Login successful then wait for 5 seconds redirect ...",
+                "[store.bilibili.update_bilibili_video] bilibili video id:1, title:x",
+                "[download] 下载完成: cover.jpg",
+            ],
+        )
+        self.assertEqual((progress.step, progress.notes), ("search", 1))
+        self.assertNotIn("download", progress.steps)
+        self.assertEqual(
+            [step["name"] for step in progress.as_dict()["steps"]],
+            ["browser", "login", "search", "import", "done"],
+        )
+
+    def test_kuaishou_and_zhihu_records(self):
+        ks = self.feed("ks", ["[store.kuaishou.update_kuaishou_video] Kuaishou video id:1, title:x"])
+        zhihu = self.feed(
+            "zhihu",
+            [
+                "[ZhihuCrawler.search] Begin search zhihu keywords",
+                "[store.zhihu.update_zhihu_content] zhihu content: {}",
+            ],
+        )
+        self.assertEqual((ks.notes, zhihu.notes, zhihu.step), (1, 1, "search"))
+
+    def test_nowcoder_steps_and_throttling(self):
+        progress = self.feed("nowcoder", ["[nowcoder] 翻阅最新面经列表第 1 页", "Login successful"])
+        self.assertEqual((progress.step, progress.as_dict()["step_title"]), ("search", "翻阅面经列表"))
+        progress.feed("[nowcoder] 牛客要求放慢请求（HTTP 429），等待 5 秒")
+        self.assertEqual(progress.attention, "throttled")
+        progress.feed("[nowcoder] 已保存帖子 1：示例")
+        progress.feed("[nowcoder] 图片下载完成 1/001.png")
+        self.assertEqual(
+            (progress.step, progress.notes, progress.media, progress.attention), ("download", 1, 1, None)
+        )
+        without_images = Progress("nowcoder", download=False)
+        self.assertEqual(without_images.steps, ("search", "fetch", "import", "done"))
+
+
 if __name__ == "__main__":
     unittest.main()

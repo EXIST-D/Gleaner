@@ -238,6 +238,8 @@ input:focus, textarea:focus, .chips:focus-within {
   cursor: pointer;
 }
 .segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.segmented.platforms { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); }
+.segmented.platforms button { padding: 6px 4px; }
 
 .chips {
   display: flex;
@@ -292,6 +294,7 @@ details.advanced[open] summary { margin-bottom: 8px; }
 .pill.unclear, .pill.degraded, .pill.stopped { background: var(--amber-soft); color: var(--amber); }
 .pill.running { background: var(--accent-soft); color: var(--accent-strong); }
 .pill.text { background: var(--accent-soft); color: var(--accent-strong); }
+.pill.platform { background: var(--blue-soft); color: var(--blue); margin-right: 6px; vertical-align: 2px; }
 .pill.dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
 /* Overview */

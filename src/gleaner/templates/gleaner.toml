@@ -1,8 +1,9 @@
 # Gleaner 工作区配置。相对路径以本文件所在目录为基准，可以使用 ~。
 
-# 不带 --keyword 运行 `gleaner crawl xhs` 时使用的搜索关键词
+# 不带 --keyword 运行 `gleaner crawl <平台>` 时使用的搜索关键词（所有平台共用）
 keywords = ["后端 面经", "Java 一面"]
 
+# 小红书、抖音、B 站、快手、知乎通过 MediaCrawler 抓取
 [mediacrawler]
 # 你本机的 MediaCrawler 目录（https://github.com/NanmiCoder/MediaCrawler），各自下载安装。
 # 默认对应仓库根目录下的 MediaCrawler/（工作区是仓库下的 workspace/ 时；该目录已被 git 忽略）
@@ -11,11 +12,26 @@ home = "../MediaCrawler"
 command = ["uv", "run", "main.py"]
 # qrcode | phone | cookie；CDP 模式连接已登录的 Chrome 时保持 qrcode 即可
 login_type = "qrcode"
-# 搜索时每个关键词抓多少篇。小红书搜索按页返回，每页 20 篇：不足 20 按一页算，
-# 其余按整页向下取整，上限 40（两页）。MediaCrawler 许可证禁止大规模爬取，请保持小批量
+# 搜索时每个关键词抓多少篇。搜索按页返回（抖音每页 10 篇，其余平台每页 20 篇）：不足一页按一页算，
+# 其余按整页向下取整，上限 40。MediaCrawler 许可证禁止大规模爬取，请保持小批量
 max_notes = 20
 # 单次运行超时（秒）
 timeout_seconds = 900
+# 同一平台两次抓取之间至少间隔多少分钟；--force 可跳过
+min_interval_minutes = 5
+
+# 牛客由 Gleaner 直接读取公开的面经列表和帖子（不登录、不使用站内搜索）
+[nowcoder]
+# 每个关键词最多保存多少篇（1–40）
+max_notes = 20
+# 每次最多翻阅多少页最新面经列表（每页 20 篇，1–25），在标题和摘要里找关键词
+scan_pages = 5
+# 两次请求之间至少间隔多少秒（不小于 1），另加最多 1 秒随机抖动
+request_interval_seconds = 3
+# 是否下载帖子里的图片（截图里的题需要看图导入）
+download_images = true
+# 单次运行超时（秒）
+timeout_seconds = 600
 # 两次抓取之间至少间隔多少分钟；--force 可跳过
 min_interval_minutes = 5
 

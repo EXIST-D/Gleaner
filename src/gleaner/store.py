@@ -242,9 +242,14 @@ class Store:
         unlabeled: bool = False,
         packed: bool | None = None,
         keys: Iterable[str] | None = None,
+        platforms: Iterable[str] | None = None,
         limit: int | None = None,
     ) -> list[PostRecord]:
         clauses, args = [], []
+        if platforms is not None:
+            platforms = list(platforms)
+            clauses.append(f"platform IN ({', '.join('?' for _ in platforms)})")
+            args.extend(platforms)
         if labels is not None:
             labels = list(labels)
             clauses.append(f"label IN ({', '.join('?' for _ in labels)})")
@@ -318,10 +323,15 @@ class Store:
             row["kind"]: row["n"]
             for row in self._db.execute("SELECT kind, COUNT(*) AS n FROM posts GROUP BY kind")
         }
+        platforms = {
+            row["platform"]: row["n"]
+            for row in self._db.execute("SELECT platform, COUNT(*) AS n FROM posts GROUP BY platform")
+        }
         return {
             "posts": count("SELECT COUNT(*) FROM posts"),
             "labels": labels,
             "kinds": kinds,
+            "platforms": platforms,
             "packed": count("SELECT COUNT(*) FROM posts WHERE packed_in IS NOT NULL"),
             "changed_after_pack": count("SELECT COUNT(*) FROM posts WHERE changed_after_pack = 1"),
             "runs": count("SELECT COUNT(*) FROM runs"),
