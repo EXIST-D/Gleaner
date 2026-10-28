@@ -60,6 +60,24 @@ class ScreenerTest(unittest.TestCase):
     def test_too_little_content_is_unclear(self):
         self.assertEqual(self.label("面经", "求"), "unclear")
 
+    def test_seo_domain_padding_is_promo(self):
+        spam = "\n".join(f"site{index}-demo.com.cn" for index in range(6))
+        verdict = self.screener.screen(
+            post("示例科技后端一面", f"问了 Redis 和 MySQL\n{spam}\n访问demo-x.top")
+        )
+        self.assertEqual(verdict.label, "promo")
+        self.assertIn(
+            "promo:7 个外部域名（site0-demo.com.cn、site1-demo.com.cn、site2-demo.com.cn 等）",
+            verdict.reasons,
+        )
+
+    def test_a_few_links_do_not_make_a_real_account_promo(self):
+        body = (
+            "示例科技一面问了 Redis，题目在 https://leetcode.cn/problems/lru-cache 和 www.github.com/demo，"
+            "项目文档放在 docs.demo-a.com，邮箱 me@demo-b.net，" + "复盘见 notes.demo-c.cn " * 6
+        )
+        self.assertEqual(self.label("后端一面面经", body), "candidate")
+
     def test_extra_terms_from_config_are_case_insensitive(self):
         screener = Screener.from_config(ScreeningConfig(strong_promo_terms=("OfferBox",)))
         self.assertEqual(screener.screen(post("面经 offerbox 推荐")).label, "promo")

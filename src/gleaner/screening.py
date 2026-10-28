@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from gleaner.config import ScreeningConfig
@@ -78,6 +79,33 @@ COLLECTION_TERMS = (
 
 MIN_BODY_CHARS = 40
 
+# SEO spam pads posts with lists of unrelated domains; real accounts link a few well-known sites at most.
+MIN_SPAM_DOMAINS = 5
+DOMAIN = re.compile(
+    r"(?<![a-z0-9@.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?:com|cn|net|org|top|xyz|cc|vip|info|io|me|co|site|shop|club|online|tv|pro|wang|ink|link|ltd|asia|biz))"
+    r"(?![a-z0-9-])"
+)
+KNOWN_DOMAINS = (
+    "github.com",
+    "github.io",
+    "gitee.com",
+    "leetcode.cn",
+    "leetcode.com",
+    "nowcoder.com",
+    "xiaohongshu.com",
+    "bilibili.com",
+    "zhihu.com",
+    "douyin.com",
+    "kuaishou.com",
+    "csdn.net",
+    "juejin.cn",
+    "cnblogs.com",
+    "baidu.com",
+    "google.com",
+    "qq.com",
+)
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -110,10 +138,14 @@ class Screener:
         promo = _hits(text, self.promo)
         strong = _hits(text, self.strong_promo)
         collection = _hits(text, self.collection)
+        domains = spam_domains(text)
         evidence = [f"interview:{t}" for t in interview] + [f"event:{t}" for t in event]
 
-        if strong or len(promo) >= 2:
-            return Verdict("promo", tuple(f"promo:{t}" for t in dict.fromkeys([*strong, *promo])))
+        if strong or len(promo) >= 2 or len(domains) >= MIN_SPAM_DOMAINS:
+            reasons = [f"promo:{t}" for t in dict.fromkeys([*strong, *promo])]
+            if len(domains) >= MIN_SPAM_DOMAINS:
+                reasons.append(f"promo:{len(domains)} 个外部域名（{'、'.join(domains[:3])} 等）")
+            return Verdict("promo", tuple(reasons))
         if not interview and not event:
             return Verdict("irrelevant", ("no-interview-terms",))
         if collection and not event:
@@ -130,3 +162,13 @@ def _merge(defaults: tuple[str, ...], extra: tuple[str, ...]) -> tuple[str, ...]
 
 def _hits(text: str, terms: tuple[str, ...]) -> list[str]:
     return [term for term in terms if term in text]
+
+
+def spam_domains(text: str) -> list[str]:
+    """Distinct domains in lowercased text, in order of appearance, leaving out well-known sites."""
+    found: dict[str, None] = {}
+    for match in DOMAIN.finditer(text):
+        domain = match.group(1).removeprefix("www.")
+        if not any(domain == known or domain.endswith("." + known) for known in KNOWN_DOMAINS):
+            found[domain] = None
+    return list(found)
