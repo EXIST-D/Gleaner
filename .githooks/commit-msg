@@ -1,0 +1,15 @@
+#!/bin/sh
+# Every commit message starts with a GLN-N number, e.g. "GLN-12: crawl Weibo".
+# Enable once per clone: git config core.hooksPath .githooks
+
+subject=$(sed -n '1p' "$1")
+case "$subject" in
+  Merge\ * | Revert\ * | fixup!\ * | squash!\ * | amend!\ *) exit 0 ;;
+esac
+if printf '%s\n' "$subject" | grep -Eq '^GLN-[0-9]+: .+'; then
+  exit 0
+fi
+echo "提交信息要以 GLN-N 编号开头，例如：GLN-12: crawl Weibo" >&2
+echo "当前第一行：$subject" >&2
+echo "最近用过的编号：$(git log --format=%s | grep -Eo '^GLN-[0-9]+' | sort -t- -k2 -n | tail -1)" >&2
+exit 1

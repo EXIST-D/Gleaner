@@ -170,12 +170,14 @@ Gleaner/
 ## 开发
 
 ```bash
+git config core.hooksPath .githooks                       # 提交信息需以 GLN-N: 开头
 python -B -X utf8 -m unittest discover -s tests -t . -v   # 测试（只用标准库）
 pip install ruff==0.16.10 && ruff check src tests && ruff format --check src tests
+node --check src/gleaner/web/static/app.js
 ```
 
 CI 在 Windows、macOS、Linux × Python 3.11–3.13 上运行测试和 lint。测试数据全部是合成的，不包含真实帖子。
-设计说明见 [docs/architecture.md](docs/architecture.md)。
+搭环境、搬数据、提交流程、代码约定和待办见 [开发手册](docs/development.md)，设计说明见 [架构说明](docs/architecture.md)。
 
 ## 计划
 

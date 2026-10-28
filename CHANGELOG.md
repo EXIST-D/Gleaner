@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 开发手册 `docs/development.md`：在新电脑上搭环境、迁移工作区和采集题库、提交流程与编号、代码约定、调试方法、
+  当前状态与待办；根目录 `AGENTS.md` 给 Agent 指路。提交信息检查随仓库提供（`.githooks/commit-msg`），
+  CI 的 lint 也检查前端脚本语法。
 - 初筛：正文堆了 5 个以上不同外部域名的帖子判为「广告/卖课/引流」，理由里写出域名数和前几个域名；
   github、leetcode、各平台自身等常见域名和邮箱地址不计数。已有标签需要 `gleaner screen --all` 才会重判。
 - 新平台：`crawl dy|bili|ks|zhihu` 通过 MediaCrawler 抓取抖音、B 站、快手、知乎。按平台设置搜索分页
