@@ -17,6 +17,9 @@ from gleaner.errors import GleanerError
 
 TIMEOUT_SECONDS = 60
 BANK_MEDIA = re.compile(r"^[0-9a-f]{64}\.(?:webp|jpe?g|png|gif)$")
+EXPORT_BASENAME = "采集题库报告"
+QUESTION_SUFFIX = "（题目版）"
+_UNSAFE_FILENAME = re.compile(r'[\\/:*?"<>|\s]+')
 XHS_NOTE = re.compile(r"^https?://(?:www\.)?xiaohongshu\.com/explore/([0-9a-zA-Z]+)$")
 
 QUESTION_TYPES = {
@@ -100,6 +103,64 @@ class BankReader:
             self._domains = domains
         return domains
 
+    # Exports (the only write: Interview Bank renders reports into its own exports/ directory)
+
+    def export_markdown(
+        self, *, company: str | None = None, domain: str | None = None, title: str = ""
+    ) -> dict:
+        name = export_name(company=company, title=title)
+        args = [
+            "export",
+            "--format",
+            "markdown",
+            "--answers",
+            "both",
+            "--output",
+            str(self.exports_dir / f"{name}.md"),
+        ]
+        if company:
+            args += ["--company", company]
+        if domain:
+            args += ["--domain", domain]
+        data = json.loads(self._run([*args, "--json"]))
+        if not data.get("ok"):
+            raise GleanerError(data.get("error") or "导出失败")
+        result = data["result"]
+        return {
+            "answer_file": Path(result["answer_output"]).name,
+            "question_file": Path(result["question_output"]).name,
+            "questions": result.get("questions", 0),
+            "answered": result.get("answered_questions", 0),
+            "pending": result.get("pending_answers", 0),
+            "excluded": result.get("excluded_questions", 0),
+        }
+
+    @property
+    def exports_dir(self) -> Path:
+        if not self.bank:
+            raise GleanerError("没有配置采集题库（handoff.bank）")
+        return self.bank / "exports"
+
+    def exports(self) -> list[dict]:
+        if not self.bank or not self.exports_dir.is_dir():
+            return []
+        files = sorted(self.exports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return [
+            {
+                "name": path.name,
+                "edition": "题目版" if path.stem.endswith(QUESTION_SUFFIX) else "答案版",
+                "size": path.stat().st_size,
+                "modified": path.stat().st_mtime,
+            }
+            for path in files
+        ]
+
+    def export_path(self, name: str) -> Path | None:
+        if not self.bank or Path(name).name != name or not name.endswith(".md"):
+            return None
+        path = self.exports_dir / name
+        return path if path.is_file() else None
+
     def media_path(self, name: str) -> Path | None:
         if not self.bank or not BANK_MEDIA.match(name):
             return None
@@ -137,6 +198,12 @@ class BankReader:
             detail = _error_message(completed.stdout) or completed.stderr.strip()[-300:]
             raise GleanerError(f"Interview Bank 读取失败：{detail or f'退出码 {completed.returncode}'}")
         return completed.stdout
+
+
+def export_name(*, company: str | None, title: str) -> str:
+    """采集题库报告[-公司][-领域], safe as a file name on every platform."""
+    parts = [EXPORT_BASENAME, *(part for part in (company, title) if part)]
+    return "-".join(_UNSAFE_FILENAME.sub("_", part).strip("_.") or "_" for part in parts)
 
 
 def note_key(source_url: str | None) -> str | None:

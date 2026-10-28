@@ -145,6 +145,16 @@ elif command == "show":
     print(json.dumps({"ok": True, "result": fixture["show"]}, ensure_ascii=False))
 elif command == "taxonomy":
     print(json.dumps({"ok": True, "result": {"items": fixture["taxonomy"]}}, ensure_ascii=False))
+elif command == "export":
+    args = sys.argv[2:]
+    option = lambda name: args[args.index(name) + 1] if name in args else ""
+    answer = Path(option("--output"))
+    question = answer.with_name(answer.stem + "（题目版）.md")
+    scope = f"company={option('--company')} domain={option('--domain')}"
+    answer.write_text(f"# 面试题整理报告\\n\\n{scope}\\n\\n| 领域 | 题目数 |\\n|---|---:|\\n| 智能体 | 2 |\\n", encoding="utf-8")
+    question.write_text("# 面试题整理报告\\n\\n题目版\\n", encoding="utf-8")
+    print(json.dumps({"ok": True, "result": {"answer_output": str(answer), "question_output": str(question),
+                      "questions": 2, "answered_questions": 1, "pending_answers": 1, "excluded_questions": 1}}))
 """
 
 
@@ -246,6 +256,50 @@ class BankPageTest(WorkspaceTestCase):
         _, data = self.get("/api/bank")
         self.assertFalse(data["available"])
         self.assertIn("ibank", data["reason"])
+
+    def post(self, path, payload):
+        headers = {"host": "127.0.0.1:8765", "x-gleaner-token": self.app.token}
+        response = self.app.handle("POST", path, headers, json.dumps(payload).encode("utf-8"))
+        return response, json.loads(response.body)
+
+    def test_export_with_current_filters_then_preview_and_download(self):
+        (self.bank / "exports").mkdir()
+        response, data = self.post("/api/bank/export", {"company": "示例科技", "topic": "ai.agent.memory"})
+        self.assertEqual(response.status, 200, data)
+        export = data["export"]
+        self.assertEqual(export["answer_file"], "采集题库报告-示例科技-智能体记忆.md")
+        self.assertEqual(export["question_file"], "采集题库报告-示例科技-智能体记忆（题目版）.md")
+        self.assertEqual((export["questions"], export["answered"]), (2, 1))
+
+        _, listing = self.get("/api/bank/exports")
+        self.assertEqual(
+            sorted((item["edition"], item["name"]) for item in listing["exports"]),
+            [("答案版", export["answer_file"]), ("题目版", export["question_file"])],
+        )
+        from urllib.parse import quote
+
+        _, report = self.get("/api/bank/export-file?name=" + quote(export["answer_file"]))
+        self.assertIn("company=示例科技 domain=ai.agent.memory", report["markdown"])
+        self.assertEqual((report["edition"], report["pair"]), ("答案版", export["question_file"]))
+
+        download, _ = self.get("/bank-export/" + quote(export["answer_file"]))
+        self.assertEqual(download.status, 200)
+        self.assertIn("attachment", download.headers["Content-Disposition"])
+        self.assertEqual(self.get("/bank-export/" + quote("../manifest.json"))[0].status, 404)
+        self.assertIn("找不到报告", self.get("/api/bank/export-file?name=x.txt")[1]["error"])
+
+    def test_export_needs_the_page_token(self):
+        headers = {"host": "127.0.0.1:8765", "x-gleaner-token": "wrong"}
+        response = self.app.handle("POST", "/api/bank/export", headers, b"{}")
+        self.assertEqual(response.status, 403)
+
+    def test_export_names_are_safe_file_names(self):
+        from gleaner.bank import export_name
+
+        self.assertEqual(export_name(company=None, title=""), "采集题库报告")
+        self.assertEqual(
+            export_name(company="A/B 公司", title="智能体:记忆"), "采集题库报告-A_B_公司-智能体_记忆"
+        )
 
     def test_note_key(self):
         self.assertEqual(note_key("https://www.xiaohongshu.com/explore/6ae0671c"), "xhs:6ae0671c")

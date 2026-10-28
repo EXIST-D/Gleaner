@@ -12,12 +12,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from gleaner import __version__
 from gleaner.bank import (
     ANSWER_STATUSES,
     INTERVIEW_TYPES,
+    QUESTION_SUFFIX,
     QUESTION_TYPES,
     ROUNDS,
     BankReader,
@@ -121,6 +122,8 @@ class WebApp:
             return self._media(path.removeprefix("/media/"))
         if path.startswith("/bank-media/"):
             return self._bank_media(path.removeprefix("/bank-media/"))
+        if path.startswith("/bank-export/"):
+            return self._bank_export_download(unquote(path.removeprefix("/bank-export/")))
         routes = {
             "/api/overview": self.overview,
             "/api/posts": self.posts,
@@ -130,6 +133,8 @@ class WebApp:
             "/api/pack": self.pack,
             "/api/bank": self.bank_questions,
             "/api/bank/question": self.bank_question,
+            "/api/bank/exports": self.bank_exports,
+            "/api/bank/export-file": self.bank_export_file,
         }
         handler = routes.get(path)
         if handler is None:
@@ -154,6 +159,37 @@ class WebApp:
             return error_response("找不到图片", HTTPStatus.NOT_FOUND)
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return Response(200, path.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+
+    def _bank_export_download(self, name: str) -> Response:
+        path = self._reader().export_path(name)
+        if path is None:
+            return error_response("找不到报告", HTTPStatus.NOT_FOUND)
+        disposition = f"attachment; filename*=UTF-8''{quote(path.name)}"
+        return Response(
+            200, path.read_bytes(), "text/markdown; charset=utf-8", {"Content-Disposition": disposition}
+        )
+
+    def bank_exports(self, _query: dict) -> dict:
+        reader = self._reader()
+        return {"exports": reader.exports(), "directory": str(reader.exports_dir) if reader.bank else ""}
+
+    def bank_export_file(self, query: dict) -> dict:
+        reader = self._reader()
+        name = query.get("name", "")
+        path = reader.export_path(name)
+        if path is None:
+            raise GleanerError(f"找不到报告 {name}")
+        if path.stem.endswith(QUESTION_SUFFIX):
+            pair = path.stem.removesuffix(QUESTION_SUFFIX) + ".md"
+        else:
+            pair = path.stem + QUESTION_SUFFIX + ".md"
+        return {
+            "name": path.name,
+            "path": str(path),
+            "edition": "题目版" if path.stem.endswith(QUESTION_SUFFIX) else "答案版",
+            "pair": pair if reader.export_path(pair) else None,
+            "markdown": path.read_text(encoding="utf-8"),
+        }
 
     def _reader(self) -> BankReader:
         handoff = load_config(self.workspace).handoff
@@ -445,6 +481,16 @@ class WebApp:
                 )
                 record = store.get(key)
             return json_response({"ok": True, "post": self._brief(record)})
+        if path == "/api/bank/export":
+            reader = self._reader()
+            problem = reader.problem()
+            if problem:
+                raise GleanerError(problem)
+            company = str(payload.get("company") or "").strip() or None
+            domain = str(payload.get("topic") or "").strip() or None
+            title = reader.domain_labels().get(domain or "", {}).get("label", domain or "")
+            result = reader.export_markdown(company=company, domain=domain, title=title)
+            return json_response({"ok": True, "export": result})
         if path == "/api/pack":
             keys = _strings(payload.get("keys"))
             if not keys:
@@ -515,6 +561,9 @@ def _answer(answer: dict) -> dict:
         "short_answer": answer.get("short_answer") or "",
         "key_points": [str(point) for point in answer.get("key_points") or []],
         "common_mistakes": [str(item) for item in answer.get("common_mistakes") or []],
+        "follow_up_questions": [str(item) for item in answer.get("follow_up_questions") or []],
+        "interviewer_intent": answer.get("interviewer_intent") or "",
+        "spoken_answer": answer.get("spoken_answer") or "",
         "sources": [
             {
                 "title": source.get("title") or source.get("url"),

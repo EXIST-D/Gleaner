@@ -14,7 +14,7 @@
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor` 和网页共用 |
-| `bank.py` | 只读访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy`，按数据文件变化缓存 |
+| `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
 | `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止 |
 | `web/progress.py` | 从 MediaCrawler 日志识别当前步骤和需要人操作的提示（扫码、验证、确认框） |
@@ -51,6 +51,9 @@ Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的
 **题库页面只通过 Interview Bank 的公开命令读取。** Gleaner 不直接解析题库的 JSONL，这样题库升级格式、
 加锁或校验规则变化时，页面不会读到半写入的数据，也不需要跟着改。题目列表按 `data/` 下文件的修改时间缓存；
 来源截图只按“64 位哈希 + 图片后缀”的文件名从题库 `media/` 目录提供。
+导出同样交给 `ibank.py export`，报告只写进题库的 `exports/`（Interview Bank 自己也只允许这里）；
+预览和下载只接受该目录下的 `.md` 文件名，不接受路径。前端的 Markdown 渲染只覆盖导出会用到的语法，
+内容先转义再加标签，只认 `<details><summary>` 这一种 HTML。
 
 **会话参数不离开本机。** 小红书链接里的 `xsec_token` 和登录会话有关。`url` 字段去掉了它和其他分享参数，
 用于去重和交接；原样的 `open_url` 只保存在本机数据库里，方便自己打开原帖。

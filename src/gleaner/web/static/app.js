@@ -105,10 +105,12 @@ async function show(view) {
     if (view === "posts") await renderPosts();
     if (view === "packs") await renderPacks();
     if (view === "bank") await renderBank();
-    const open = new URLSearchParams(location.hash.split("?")[1] || "").get("open");
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    const open = params.get("open");
     if (open && view === "posts") await openPost(open);
     if (open && view === "packs") await openPack(open);
     if (open && view === "bank") await openQuestion(open);
+    if (params.get("report") && view === "bank") await openExportPreview(params.get("report"));
   } catch (error) {
     toast(error.message, { error: true });
   }
@@ -657,17 +659,27 @@ async function openPack(id) {
   }
 }
 
+const ESCAPABLE = /\\([\\`*_{}[\]()#+\-.!|>~])/g;
+
 function inline(text) {
-  return esc(text)
+  const kept = [];
+  const protectedText = text.replace(ESCAPABLE, (_, char) => `\u0000${kept.push(char) - 1}\u0001`);
+  return esc(protectedText)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\u0000(\d+)\u0001/g, (_, index) => esc(kept[Number(index)]));
 }
 
-function renderMarkdown(markdown) {
+function tableCells(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function renderMarkdown(markdown, { headingIds = false } = {}) {
   const lines = markdown.split("\n");
   const out = [];
   let list = null;
+  let headingCount = 0;
   const closeList = () => {
     if (list) out.push(`</${list}>`);
     list = null;
@@ -682,12 +694,43 @@ function renderMarkdown(markdown) {
       out.push(`<pre><button class="btn small copy" data-action="copy" data-text="${esc(text)}">复制</button><code>${esc(text)}</code></pre>`);
       continue;
     }
-    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (line.trim().startsWith("|") && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1] || "")) {
+      closeList();
+      const head = tableCells(line);
+      const align = tableCells(lines[i + 1]).map((cell) => (cell.endsWith(":") ? "right" : ""));
+      const rows = [];
+      for (i += 2; i < lines.length && lines[i].trim().startsWith("|"); i++) rows.push(tableCells(lines[i]));
+      i--;
+      const cell = (tag, value, index) => `<${tag}${align[index] ? ` class="num"` : ""}>${inline(value)}</${tag}>`;
+      out.push(`<div class="table-wrap"><table><thead><tr>${head.map((v, k) => cell("th", v, k)).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((v, k) => cell("td", v, k)).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    const details = line.match(/^<details>(?:<summary>(.*)<\/summary>)?\s*$/);
+    if (details) {
+      closeList();
+      out.push(`<details><summary>${inline(details[1] || "展开")}</summary>`);
+      continue;
+    }
+    if (/^<\/details>\s*$/.test(line)) {
+      closeList();
+      out.push("</details>");
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
     const ordered = line.match(/^\d+\.\s+(.*)$/);
     const bullet = line.match(/^[-*]\s+(.*)$/);
-    if (heading) {
+    const quote = line.match(/^>\s?(.*)$/);
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
       closeList();
-      out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+      out.push("<hr>");
+    } else if (heading) {
+      closeList();
+      const level = Math.min(heading[1].length, 4);
+      const id = headingIds && level === 2 ? ` id="md-h-${headingCount++}"` : "";
+      out.push(`<h${level}${id}>${inline(heading[2])}</h${level}>`);
+    } else if (quote) {
+      closeList();
+      out.push(`<blockquote>${inline(quote[1])}</blockquote>`);
     } else if (ordered || bullet) {
       const kind = ordered ? "ol" : "ul";
       if (list !== kind) {
@@ -714,14 +757,22 @@ async function renderBank() {
   const data = await api("/api/bank");
   b.data = data;
   const view = $("#view-bank");
-  const head = `
-    <div class="view-head">
-      <div><h1>题库</h1><p>Agent 导入采集题库后整理好的题目：按领域分组，按出现次数排序，点开可以看原文和出处。</p></div>
-    </div>`;
+  const intro = `<div><h1>题库</h1><p>Agent 导入采集题库后整理好的题目：按领域分组，按出现次数排序，点开可以看原文和出处。</p></div>`;
   if (!data.available) {
-    view.innerHTML = `${head}<div class="card empty">${esc(data.reason)}</div>`;
+    view.innerHTML = `<div class="view-head">${intro}</div><div class="card empty">${esc(data.reason)}</div>`;
     return;
   }
+  const topicTitle = data.topics.find((t) => t.id === b.topic)?.title;
+  const scope = [b.company, topicTitle ? `${topicTitle}（含子领域）` : ""].filter(Boolean).join(" · ") || "全部题目";
+  const head = `
+    <div class="view-head">
+      ${intro}
+      <div class="head-actions export-actions">
+        <button class="btn" data-action="open-exports">已导出的报告</button>
+        <button class="btn primary" data-action="export-bank">导出 Markdown</button>
+        <span class="faint export-scope">导出范围：${esc(scope)}</span>
+      </div>
+    </div>`;
   const s = data.summary;
   const text = b.q.toLowerCase();
   const visible = data.questions.filter((q) =>
@@ -769,6 +820,76 @@ async function renderBank() {
   }
 }
 
+async function exportBank() {
+  const button = document.querySelector('[data-action="export-bank"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = "导出中…";
+  }
+  try {
+    const { export: result } = await api("/api/bank/export", {
+      method: "POST",
+      body: { company: state.bank.company, topic: state.bank.topic },
+    });
+    toast(`已导出 ${result.questions} 道题（${result.answered} 道有参考答案）：答案版和题目版各一份`);
+    await openExportPreview(result.answer_file);
+  } catch (error) {
+    toast(error.message, { error: true });
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "导出 Markdown";
+    }
+  }
+}
+
+async function openExports() {
+  openDrawer("加载中…", "");
+  try {
+    const { exports, directory } = await api("/api/bank/exports");
+    const reports = exports.filter((item) => item.edition === "答案版");
+    openDrawer("已导出的报告", `
+      <p class="muted">报告保存在 <code>${esc(directory)}</code>，每次导出会生成答案版和题目版两份，同名会覆盖。</p>
+      ${reports.length ? `<div class="list">${reports.map((item) => `
+        <button class="list-row report-row" data-action="preview-export" data-name="${esc(item.name)}">
+          <span class="grow"><span class="title">${esc(item.name.replace(/\.md$/, ""))}</span>
+          <span class="sub">${esc(new Date(item.modified * 1000).toLocaleString("zh-CN"))} · ${Math.max(1, Math.round(item.size / 1024))} KB</span></span>
+          <span class="pill text">预览</span>
+        </button>`).join("")}</div>` : `<div class="empty">还没有导出过报告</div>`}`, null, { wide: true });
+  } catch (error) {
+    closeDrawer();
+    toast(error.message, { error: true });
+  }
+}
+
+async function openExportPreview(name) {
+  openDrawer("加载中…", "", null, { wide: true });
+  try {
+    const report = await api(`/api/bank/export-file?name=${encodeURIComponent(name)}`);
+    state.preview = report;
+    const body = renderMarkdown(report.markdown, { headingIds: true });
+    const toc = [...report.markdown.matchAll(/^##\s+(.+)$/gm)].map((match, index) => ({ index, title: match[1] }));
+    const answerName = report.edition === "答案版" ? report.name : report.pair;
+    const questionName = report.edition === "题目版" ? report.name : report.pair;
+    openDrawer(report.name.replace(/\.md$/, ""), `
+      <div class="preview-bar">
+        ${report.pair ? `<div class="segmented">
+          <button class="${report.edition === "答案版" ? "active" : ""}" data-action="preview-export" data-name="${esc(answerName)}">答案版</button>
+          <button class="${report.edition === "题目版" ? "active" : ""}" data-action="preview-export" data-name="${esc(questionName)}">题目版</button>
+        </div>` : ""}
+        <span class="spacer"></span>
+        <a class="btn small" href="/bank-export/${encodeURIComponent(report.name)}" download="${esc(report.name)}">下载 .md</a>
+        <button class="btn small" data-action="copy-preview">复制全文</button>
+        <button class="btn small ghost" data-action="copy" data-text="${esc(report.path)}">复制路径</button>
+      </div>
+      ${toc.length > 1 ? `<div class="toc">${toc.map((t) => `<button data-action="scroll-heading" data-index="${t.index}">${esc(t.title.replace(/（\d+ 题）$/, ""))}</button>`).join("")}</div>` : ""}
+      <article class="markdown report">${body}</article>`, null, { wide: true });
+  } catch (error) {
+    closeDrawer();
+    toast(error.message, { error: true });
+  }
+}
+
 function questionRow(q, rank) {
   const answered = q.answer_status === "source_backed" || q.answer_status === "reviewed";
   return `
@@ -805,9 +926,12 @@ async function openQuestion(id) {
       <div class="section-title">参考答案${a ? ` · ${esc(a.status_title)}` : ""}</div>
       ${a ? `
         <div class="answer">
-          ${a.short_answer ? `<p>${esc(a.short_answer)}</p>` : ""}
-          ${a.key_points.length ? `<ul>${a.key_points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+          ${shortAnswerHtml(a.short_answer)}
+          ${a.key_points.length ? `<details class="answer-more"><summary>有来源的要点 · ${a.key_points.length} 条</summary><ul>${a.key_points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></details>` : ""}
+          ${a.spoken_answer ? `<div class="answer-sub">口述版</div><p>${esc(a.spoken_answer)}</p>` : ""}
+          ${a.follow_up_questions.length ? `<div class="answer-sub">常见追问</div><ul>${a.follow_up_questions.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
           ${a.common_mistakes.length ? `<div class="answer-sub">易错点</div><ul>${a.common_mistakes.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+          ${a.interviewer_intent ? `<div class="answer-sub">面试官想考察什么</div><p>${esc(a.interviewer_intent)}</p>` : ""}
           ${a.sources.length ? `<div class="answer-sub">来源</div><ul class="sources">${a.sources.map((src) => `<li><a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${esc(src.title)}</a>${src.publisher ? ` · ${esc(src.publisher)}` : ""}</li>`).join("")}</ul>` : ""}
         </div>` : `<div class="empty-note">还没有参考答案。需要时让 Agent 用 interview-bank 为采集题库研究有来源的答案。</div>`}
 
@@ -820,6 +944,12 @@ async function openQuestion(id) {
     closeDrawer();
     toast(error.message, { error: true });
   }
+}
+
+function shortAnswerHtml(text) {
+  const lines = (text || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length <= 1) return lines.length ? `<p>${esc(lines[0])}</p>` : "";
+  return `<ul class="short-answer">${lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`;
 }
 
 function occurrenceCard(o) {
@@ -839,10 +969,12 @@ function occurrenceCard(o) {
 
 /* ---------- Drawer ---------- */
 
-function openDrawer(title, html, key = null) {
+function openDrawer(title, html, key = null, { wide = false } = {}) {
   $("#drawer-title").textContent = title;
   $("#drawer-body").innerHTML = html;
+  $("#drawer-body").scrollTop = 0;
   $("#drawer").dataset.key = key || "";
+  $("#drawer").classList.toggle("wide", wide);
   $("#drawer").classList.add("open");
   $("#drawer").setAttribute("aria-hidden", "false");
   $("#overlay").hidden = false;
@@ -881,6 +1013,11 @@ document.addEventListener("click", (event) => {
     "pack-selected": packSelected,
     "open-pack": () => openPack(target.dataset.id),
     "open-question": () => openQuestion(target.dataset.id),
+    "export-bank": exportBank,
+    "open-exports": openExports,
+    "preview-export": () => openExportPreview(target.dataset.name),
+    "copy-preview": () => state.preview && copy(state.preview.markdown),
+    "scroll-heading": () => $(`#md-h-${target.dataset.index}`)?.scrollIntoView({ behavior: "smooth", block: "start" }),
     "bank-topic": () => { state.bank.topic = target.dataset.topic; renderBank(); },
     "bank-company": () => { state.bank.company = target.dataset.company; renderBank(); },
     "copy": () => copy(target.dataset.text),
