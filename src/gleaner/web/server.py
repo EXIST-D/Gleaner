@@ -15,6 +15,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from gleaner import __version__
+from gleaner.bank import (
+    ANSWER_STATUSES,
+    INTERVIEW_TYPES,
+    QUESTION_TYPES,
+    ROUNDS,
+    BankReader,
+    note_key,
+    topic_of,
+)
 from gleaner.bodytext import choose_intake, listed_questions
 from gleaner.checks import environment_checks
 from gleaner.config import MAX_NOTES_CAP, load_config
@@ -67,6 +76,7 @@ class WebApp:
         self.jobs = jobs or CrawlJobs(workspace)
         self.token = token or secrets.token_urlsafe(24)
         self.port = port
+        self._bank: BankReader | None = None
         load_config(workspace)
 
     def allowed_hosts(self) -> set[str]:
@@ -109,6 +119,8 @@ class WebApp:
             return Response(200, _static(name), content_type)
         if path.startswith("/media/"):
             return self._media(path.removeprefix("/media/"))
+        if path.startswith("/bank-media/"):
+            return self._bank_media(path.removeprefix("/bank-media/"))
         routes = {
             "/api/overview": self.overview,
             "/api/posts": self.posts,
@@ -116,6 +128,8 @@ class WebApp:
             "/api/crawl": self.crawl_status,
             "/api/packs": self.packs,
             "/api/pack": self.pack,
+            "/api/bank": self.bank_questions,
+            "/api/bank/question": self.bank_question,
         }
         handler = routes.get(path)
         if handler is None:
@@ -133,6 +147,127 @@ class WebApp:
             return error_response("找不到图片", HTTPStatus.NOT_FOUND)
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         return Response(200, target.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+
+    def _bank_media(self, name: str) -> Response:
+        path = self._reader().media_path(name)
+        if path is None:
+            return error_response("找不到图片", HTTPStatus.NOT_FOUND)
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return Response(200, path.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+
+    def _reader(self) -> BankReader:
+        handoff = load_config(self.workspace).handoff
+        if self._bank is None or self._bank.handoff != handoff:
+            self._bank = BankReader(handoff)
+        return self._bank
+
+    def bank_questions(self, _query: dict) -> dict:
+        reader = self._reader()
+        problem = reader.problem()
+        if problem:
+            return {"available": False, "reason": problem, "bank": str(reader.bank or "")}
+        labels = reader.domain_labels()
+        items = [_question_brief(row, labels) for row in reader.questions()]
+        active = [item for item in items if not item["excluded"]]
+        topics: dict[str, dict] = {}
+        companies: dict[str, int] = {}
+        for item in active:
+            topic = topics.setdefault(
+                item["topic"], {"id": item["topic"], "title": item["topic_title"], "count": 0}
+            )
+            topic["count"] += 1
+            for name in item["companies"]:
+                companies[name] = companies.get(name, 0) + 1
+        return {
+            "available": True,
+            "bank": str(reader.bank),
+            "summary": {
+                "questions": len(active),
+                "excluded": len(items) - len(active),
+                "occurrences": sum(item["frequency"] for item in active),
+                "companies": len(companies),
+                "answered": sum(item["answer_status"] in ("source_backed", "reviewed") for item in active),
+                "repeated": sum(item["frequency"] > 1 for item in active),
+            },
+            "topics": sorted(topics.values(), key=lambda topic: (-topic["count"], topic["title"])),
+            "companies": [
+                {"name": name, "count": count}
+                for name, count in sorted(companies.items(), key=lambda pair: (-pair[1], pair[0]))
+            ],
+            "questions": items,
+        }
+
+    def bank_question(self, query: dict) -> dict:
+        reader = self._reader()
+        result = reader.question(query.get("id", ""))
+        labels = reader.domain_labels()
+        rows = {row["id"]: row for row in reader.questions()}
+        occurrence_owner = {
+            occurrence["id"]: (row["id"], occurrence.get("original_text", ""))
+            for row in rows.values()
+            for occurrence in row.get("occurrences", [])
+        }
+        question = result["question"]
+        sources = {source["id"]: source for source in result.get("sources", [])}
+        companies = {company["id"]: company["name"] for company in question.get("companies", [])}
+
+        with Store.open(self.workspace) as store:
+            known = {
+                key
+                for source in sources.values()
+                if (key := note_key(source.get("source_url"))) and store.get(key) is not None
+            }
+
+        occurrences = []
+        for occurrence in question.get("occurrences", []):
+            source = sources.get(occurrence.get("source_id"), {})
+            parent = occurrence_owner.get(occurrence.get("parent_occurrence_id") or "")
+            media = Path(source.get("path") or "").name
+            key = note_key(source.get("source_url"))
+            occurrences.append(
+                {
+                    "original_text": occurrence.get("original_text", ""),
+                    "company": companies.get(occurrence.get("company_id") or ""),
+                    "round": ROUNDS.get(occurrence.get("round") or "unknown", occurrence.get("round")),
+                    "interview_type": INTERVIEW_TYPES.get(occurrence.get("interview_type") or "unknown", ""),
+                    "event_date": occurrence.get("event_date"),
+                    "source_date": source.get("source_date"),
+                    "platform": source.get("platform"),
+                    "source_url": source.get("source_url"),
+                    "source_type": source.get("type"),
+                    "image": f"/bank-media/{media}"
+                    if source.get("type") == "image" and reader.media_path(media)
+                    else None,
+                    "post_key": key if key in known else None,
+                    "follow_up_of": {"id": parent[0], "text": parent[1]} if parent else None,
+                }
+            )
+
+        relations = []
+        for relation in result.get("relations", []):
+            other = (
+                relation["to_question_id"]
+                if relation["from_question_id"] == question["id"]
+                else relation["from_question_id"]
+            )
+            if other in rows:
+                relations.append(
+                    {"id": other, "canonical": rows[other]["canonical"], "type": relation.get("type")}
+                )
+
+        answer = question.get("answer") if isinstance(question.get("answer"), dict) else None
+        return {
+            "question": {
+                **_question_brief(question, labels),
+                "role_tracks": question.get("role_tracks", []),
+                "occurrences": occurrences,
+                "relations": relations,
+                "merged_variants": [
+                    variant.get("canonical", "") for variant in result.get("merged_variants", [])
+                ],
+                "answer": _answer(answer) if answer else None,
+            }
+        }
 
     def overview(self, _query: dict) -> dict:
         config = load_config(self.workspace)
@@ -341,6 +476,56 @@ class WebApp:
             "packed_in": record.packed_in,
             "excerpt": post.body[:90],
         }
+
+
+def _question_brief(row: dict, labels: dict[str, dict]) -> dict:
+    topic, topic_title = topic_of(row.get("domains") or [], labels)
+    occurrences = row.get("occurrences") or []
+    companies = row.get("companies") or []
+    status = row.get("answer_status") or "missing"
+    return {
+        "id": row["id"],
+        "canonical": row.get("canonical", ""),
+        "frequency": row.get("frequency", len(occurrences)),
+        "companies": [
+            company["name"] if isinstance(company, dict) else str(company) for company in companies
+        ],
+        "topic": topic,
+        "topic_title": topic_title,
+        "domains": [labels.get(domain, {}).get("label", domain) for domain in row.get("domains") or []],
+        "technologies": row.get("technologies") or [],
+        "question_type": row.get("question_type"),
+        "type_title": QUESTION_TYPES.get(row.get("question_type") or "", row.get("question_type") or ""),
+        "rounds": sorted(
+            {ROUNDS.get(o.get("round") or "unknown", "") for o in occurrences} - {"", ROUNDS["unknown"]}
+        ),
+        "interview_types": sorted(
+            {INTERVIEW_TYPES.get(o.get("interview_type") or "unknown", "") for o in occurrences} - {""}
+        ),
+        "answer_status": status,
+        "answer_title": ANSWER_STATUSES.get(status, status),
+        "excluded": row.get("report_exclusion"),
+    }
+
+
+def _answer(answer: dict) -> dict:
+    return {
+        "status": answer.get("status"),
+        "status_title": ANSWER_STATUSES.get(answer.get("status") or "", answer.get("status")),
+        "short_answer": answer.get("short_answer") or "",
+        "key_points": [str(point) for point in answer.get("key_points") or []],
+        "common_mistakes": [str(item) for item in answer.get("common_mistakes") or []],
+        "sources": [
+            {
+                "title": source.get("title") or source.get("url"),
+                "url": source.get("url"),
+                "publisher": source.get("publisher"),
+            }
+            for source in answer.get("sources") or []
+            if isinstance(source, dict) and str(source.get("url", "")).startswith(("http://", "https://"))
+        ],
+        "verified_at": answer.get("verified_at"),
+    }
 
 
 def _static(name: str) -> bytes:

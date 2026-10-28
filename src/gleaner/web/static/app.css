@@ -565,6 +565,70 @@ details.advanced[open] summary { margin-bottom: 8px; }
 .markdown ol, .markdown ul { padding-left: 22px; }
 .markdown a { color: var(--accent-strong); }
 
+/* Bank */
+
+.topic-filter { margin: -6px 0 22px; }
+.topic-group { margin-bottom: 22px; }
+.topic-group h3 { margin: 0 0 10px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.topic-group h3 span { font-size: 12px; font-weight: 600; color: var(--faint); background: var(--gray-soft); border-radius: 999px; padding: 1px 8px; }
+
+.q-list { padding: 4px 6px; }
+.q-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+.q-row:first-child { border-top: none; }
+.q-row:hover { background: var(--surface-2); }
+.q-row.excluded { opacity: 0.55; }
+.q-rank { flex: none; width: 24px; color: var(--faint); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.q-main { display: grid; gap: 7px; min-width: 0; flex: 1; }
+.q-text { font-weight: 600; line-height: 1.55; }
+.q-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.q-companies { color: var(--muted); font-size: 13px; margin-left: 4px; }
+
+.answer { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; font-size: 14px; line-height: 1.75; }
+.answer p { margin: 0 0 8px; }
+.answer ul { margin: 0; padding-left: 20px; }
+.answer .answer-sub { font-weight: 700; color: var(--muted); font-size: 13px; margin: 12px 0 4px; }
+.answer .sources a { color: var(--accent-strong); }
+.empty-note { color: var(--muted); font-size: 14px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 12px; }
+.muted-note { background: var(--gray-soft); color: var(--muted); margin-top: 14px; }
+
+.occurrences { display: grid; gap: 12px; }
+.occurrence { border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; background: var(--surface); }
+.occ-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.occ-meta span:first-child { color: var(--text); }
+.occurrence blockquote { margin: 10px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--accent); font-size: 14px; line-height: 1.7; }
+.follow-up { display: block; margin-top: 8px; border: none; background: none; padding: 0; color: var(--blue); font-size: 13px; text-align: left; cursor: pointer; }
+.follow-up:hover { text-decoration: underline; }
+.occ-image img { display: block; max-height: 300px; max-width: 100%; border-radius: 10px; border: 1px solid var(--border); }
+.occ-actions { display: flex; gap: 6px; margin-top: 10px; }
+
+ul.plain { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.related { display: grid; gap: 6px; }
+.related-item {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.related-item:hover { border-color: var(--accent); background: var(--accent-soft); }
+
 /* Toast */
 
 .toast {

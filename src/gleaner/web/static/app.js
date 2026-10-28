@@ -3,7 +3,7 @@
 /* ---------- Helpers ---------- */
 
 const TOKEN = document.querySelector('meta[name="gleaner-token"]').content;
-const VIEWS = ["overview", "crawl", "posts", "packs"];
+const VIEWS = ["overview", "crawl", "posts", "packs", "bank"];
 const LABEL_ORDER = ["candidate", "collection", "promo", "unclear", "irrelevant"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -82,6 +82,7 @@ const state = {
   waitDeadline: null,
   tick: null,
   posts: { label: "candidate", packed: "no", q: "", data: null },
+  bank: { data: null, topic: "", company: "", q: "", showExcluded: false },
   selected: new Set(),
 };
 
@@ -103,9 +104,11 @@ async function show(view) {
     if (view === "crawl") await renderCrawl();
     if (view === "posts") await renderPosts();
     if (view === "packs") await renderPacks();
+    if (view === "bank") await renderBank();
     const open = new URLSearchParams(location.hash.split("?")[1] || "").get("open");
     if (open && view === "posts") await openPost(open);
     if (open && view === "packs") await openPack(open);
+    if (open && view === "bank") await openQuestion(open);
   } catch (error) {
     toast(error.message, { error: true });
   }
@@ -704,6 +707,136 @@ function renderMarkdown(markdown) {
   return out.join("");
 }
 
+/* ---------- Bank ---------- */
+
+async function renderBank() {
+  const b = state.bank;
+  const data = await api("/api/bank");
+  b.data = data;
+  const view = $("#view-bank");
+  const head = `
+    <div class="view-head">
+      <div><h1>题库</h1><p>Agent 导入采集题库后整理好的题目：按领域分组，按出现次数排序，点开可以看原文和出处。</p></div>
+    </div>`;
+  if (!data.available) {
+    view.innerHTML = `${head}<div class="card empty">${esc(data.reason)}</div>`;
+    return;
+  }
+  const s = data.summary;
+  const text = b.q.toLowerCase();
+  const visible = data.questions.filter((q) =>
+    (b.showExcluded || !q.excluded)
+    && (!b.topic || q.topic === b.topic)
+    && (!b.company || q.companies.includes(b.company))
+    && (!text || `${q.canonical}\n${q.domains.join(" ")}\n${q.companies.join(" ")}`.toLowerCase().includes(text)));
+  const groups = data.topics
+    .map((topic) => ({ ...topic, items: visible.filter((q) => q.topic === topic.id) }))
+    .filter((group) => group.items.length);
+  const orphans = visible.filter((q) => !data.topics.some((topic) => topic.id === q.topic));
+  if (orphans.length) groups.push({ id: "excluded", title: "已排除", items: orphans });
+
+  const searchHadFocus = document.activeElement?.id === "bank-search";
+  view.innerHTML = `
+    ${head}
+    <div class="grid stats">
+      ${statCard("题目", s.questions, s.excluded ? `另有 ${s.excluded} 道已排除` : "全部有效")}
+      ${statCard("出现次数", s.occurrences, `${s.repeated} 道题在多篇面经里出现`, true)}
+      ${statCard("公司", s.companies, data.companies.slice(0, 3).map((c) => c.name).join("、") || "暂无")}
+      ${statCard("有参考答案", s.answered, s.answered ? "已附来源" : "需要时让 Agent 研究答案")}
+    </div>
+    <div class="toolbar">
+      <div class="filter">
+        <button data-action="bank-company" data-company="" class="${!b.company ? "active" : ""}">全部公司</button>
+        ${data.companies.map((c) => `<button data-action="bank-company" data-company="${esc(c.name)}" class="${b.company === c.name ? "active" : ""}">${esc(c.name)}<span class="n">${c.count}</span></button>`).join("")}
+      </div>
+      <span class="spacer"></span>
+      ${s.excluded ? `<label class="check"><input type="checkbox" id="bank-excluded" ${b.showExcluded ? "checked" : ""}> 显示已排除</label>` : ""}
+      <input type="search" id="bank-search" placeholder="搜索题目、领域、公司" value="${esc(b.q)}">
+    </div>
+    <div class="filter topic-filter">
+      <button data-action="bank-topic" data-topic="" class="${!b.topic ? "active" : ""}">全部领域<span class="n">${s.questions}</span></button>
+      ${data.topics.map((t) => `<button data-action="bank-topic" data-topic="${esc(t.id)}" class="${b.topic === t.id ? "active" : ""}">${esc(t.title)}<span class="n">${t.count}</span></button>`).join("")}
+    </div>
+    ${groups.length ? groups.map((group) => `
+      <section class="topic-group">
+        <h3>${esc(group.title)}<span>${group.items.length}</span></h3>
+        <div class="card q-list">${group.items.map((q, i) => questionRow(q, i + 1)).join("")}</div>
+      </section>`).join("") : `<div class="card empty">${data.questions.length ? "没有符合条件的题目" : "题库还是空的。打包帖子后，把 HANDOFF.md 交给 Agent 导入，题目就会出现在这里。"}</div>`}`;
+  if (searchHadFocus) {
+    const input = $("#bank-search");
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function questionRow(q, rank) {
+  const answered = q.answer_status === "source_backed" || q.answer_status === "reviewed";
+  return `
+    <button class="q-row${q.excluded ? " excluded" : ""}" data-action="open-question" data-id="${esc(q.id)}">
+      <span class="q-rank">${rank}</span>
+      <span class="q-main">
+        <span class="q-text">${esc(q.canonical)}</span>
+        <span class="q-meta">
+          <span class="pill ${q.frequency > 1 ? "text" : ""}">出现 ${q.frequency} 次</span>
+          ${q.type_title ? `<span class="pill">${esc(q.type_title)}</span>` : ""}
+          ${q.rounds.map((r) => `<span class="pill">${esc(r)}</span>`).join("")}
+          ${answered ? `<span class="pill ok">${esc(q.answer_title)}</span>` : ""}
+          ${q.excluded ? `<span class="pill">已排除</span>` : ""}
+          <span class="q-companies">${esc(q.companies.join("、"))}</span>
+        </span>
+      </span>
+    </button>`;
+}
+
+async function openQuestion(id) {
+  openDrawer("加载中…", "");
+  try {
+    const { question: q } = await api(`/api/bank/question?id=${encodeURIComponent(id)}`);
+    const a = q.answer;
+    openDrawer(q.canonical, `
+      <div class="badges">
+        ${q.type_title ? `<span class="pill">${esc(q.type_title)}</span>` : ""}
+        ${q.domains.map((d) => `<span class="pill">${esc(d)}</span>`).join("")}
+        ${q.technologies.map((t) => `<span class="pill">${esc(t)}</span>`).join("")}
+        <span class="pill ${q.frequency > 1 ? "text" : ""}">出现 ${q.frequency} 次</span>
+      </div>
+      ${q.excluded ? `<div class="intake-note muted-note">已排除，不会出现在报告里：${esc(q.excluded)}</div>` : ""}
+
+      <div class="section-title">参考答案${a ? ` · ${esc(a.status_title)}` : ""}</div>
+      ${a ? `
+        <div class="answer">
+          ${a.short_answer ? `<p>${esc(a.short_answer)}</p>` : ""}
+          ${a.key_points.length ? `<ul>${a.key_points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+          ${a.common_mistakes.length ? `<div class="answer-sub">易错点</div><ul>${a.common_mistakes.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+          ${a.sources.length ? `<div class="answer-sub">来源</div><ul class="sources">${a.sources.map((src) => `<li><a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${esc(src.title)}</a>${src.publisher ? ` · ${esc(src.publisher)}` : ""}</li>`).join("")}</ul>` : ""}
+        </div>` : `<div class="empty-note">还没有参考答案。需要时让 Agent 用 interview-bank 为采集题库研究有来源的答案。</div>`}
+
+      <div class="section-title">出现记录 · ${q.occurrences.length} 次</div>
+      <div class="occurrences">${q.occurrences.map(occurrenceCard).join("")}</div>
+
+      ${q.merged_variants.length ? `<div class="section-title">合并过的问法</div><ul class="plain">${q.merged_variants.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : ""}
+      ${q.relations.length ? `<div class="section-title">相关题目</div><div class="related">${q.relations.map((r) => `<button class="related-item" data-action="open-question" data-id="${esc(r.id)}">${esc(r.canonical)}</button>`).join("")}</div>` : ""}`);
+  } catch (error) {
+    closeDrawer();
+    toast(error.message, { error: true });
+  }
+}
+
+function occurrenceCard(o) {
+  const meta = [o.company, o.round, o.interview_type, o.event_date ? `面试 ${o.event_date}` : o.source_date ? `发布 ${o.source_date}` : ""].filter(Boolean);
+  return `
+    <div class="occurrence">
+      <div class="occ-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}<span class="faint">${esc(o.source_type === "image" ? "截图" : "正文")}</span></div>
+      ${o.follow_up_of ? `<button class="follow-up" data-action="open-question" data-id="${esc(o.follow_up_of.id)}">追问自：${esc(o.follow_up_of.text)}</button>` : ""}
+      <blockquote>${esc(o.original_text)}</blockquote>
+      ${o.image ? `<a class="occ-image" href="${esc(o.image)}" target="_blank" rel="noopener"><img src="${esc(o.image)}" alt="题目所在的截图" loading="lazy"></a>` : ""}
+      <div class="occ-actions">
+        ${o.source_url ? `<a class="btn small" href="${esc(o.source_url)}" target="_blank" rel="noopener noreferrer">打开原帖</a>` : ""}
+        ${o.post_key ? `<a class="btn small ghost" href="#posts?open=${encodeURIComponent(o.post_key)}">在帖子里查看</a>` : ""}
+      </div>
+    </div>`;
+}
+
 /* ---------- Drawer ---------- */
 
 function openDrawer(title, html, key = null) {
@@ -747,6 +880,9 @@ document.addEventListener("click", (event) => {
     "clear-selection": () => { state.selected.clear(); renderPosts(); },
     "pack-selected": packSelected,
     "open-pack": () => openPack(target.dataset.id),
+    "open-question": () => openQuestion(target.dataset.id),
+    "bank-topic": () => { state.bank.topic = target.dataset.topic; renderBank(); },
+    "bank-company": () => { state.bank.company = target.dataset.company; renderBank(); },
     "copy": () => copy(target.dataset.text),
     "crawl-mode": () => { state.crawl.mode = target.dataset.mode; renderCrawlForm(); },
     "crawl-pages": () => { state.crawl.pages = Number(target.dataset.pages); renderCrawlForm(); },
@@ -787,6 +923,9 @@ document.addEventListener("input", (event) => {
   } else if (event.target.id === "post-search") {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.posts.q = event.target.value.trim(); renderPosts(); }, 250);
+  } else if (event.target.id === "bank-search") {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.bank.q = event.target.value.trim(); renderBank(); }, 250);
   }
 });
 
@@ -794,6 +933,9 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "force-input") {
     state.crawl.force = event.target.checked;
     updateStartButton();
+  } else if (event.target.id === "bank-excluded") {
+    state.bank.showExcluded = event.target.checked;
+    renderBank();
   }
 });
 

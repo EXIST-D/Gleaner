@@ -14,6 +14,7 @@
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor` 和网页共用 |
+| `bank.py` | 只读访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy`，按数据文件变化缓存 |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
 | `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止 |
 | `web/progress.py` | 从 MediaCrawler 日志识别当前步骤和需要人操作的提示（扫码、验证、确认框） |
@@ -46,6 +47,10 @@ Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的
 
 **发布日期不是面试日期。** 素材包只提供 `source_date`（按北京时间换算的发布日期）。
 面试日期、公司、轮次需要 Interview Bank 在原文里找到依据才填写。
+
+**题库页面只通过 Interview Bank 的公开命令读取。** Gleaner 不直接解析题库的 JSONL，这样题库升级格式、
+加锁或校验规则变化时，页面不会读到半写入的数据，也不需要跟着改。题目列表按 `data/` 下文件的修改时间缓存；
+来源截图只按“64 位哈希 + 图片后缀”的文件名从题库 `media/` 目录提供。
 
 **会话参数不离开本机。** 小红书链接里的 `xsec_token` 和登录会话有关。`url` 字段去掉了它和其他分享参数，
 用于去重和交接；原样的 `open_url` 只保存在本机数据库里，方便自己打开原帖。
