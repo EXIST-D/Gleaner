@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- Windows：调用 Interview Bank 时强制 UTF-8 输出，题库页不再因为中文输出报 `UnicodeEncodeError`；
+  网页控制台的静态文件和图片按固定的后缀表给出类型，不再依赖系统注册表（`.webp` 会被当成二进制下载）。
 - 开发手册 `docs/development.md`：在新电脑上搭环境、迁移工作区和采集题库、提交流程与编号、代码约定、调试方法、
   当前状态与待办；根目录 `AGENTS.md` 给 Agent 指路。提交信息检查随仓库提供（`.githooks/commit-msg`），
   CI 的 lint 也检查前端脚本语法。

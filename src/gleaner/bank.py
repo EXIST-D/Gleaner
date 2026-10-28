@@ -7,6 +7,7 @@ rules apply and Gleaner never touches its JSONL files.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import threading
@@ -184,6 +185,7 @@ class BankReader:
         try:
             completed = subprocess.run(
                 command,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

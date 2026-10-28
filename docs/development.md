@@ -78,7 +78,7 @@ git pull --rebase                         # 先同步另一台电脑推上来的
   && node --check src/gleaner/web/static/app.js \
   && .venv/bin/python -B -X utf8 -m unittest discover -s tests -t .
 
-git add -A && git commit -m "GLN-11: <英文的一句话说明>"
+git add -A && git commit -m "GLN-12: <英文的一句话说明>"
 git push
 ```
 
@@ -117,7 +117,7 @@ git push
 
 ## 7. 当前状态
 
-版本 0.1.0，提交到 GLN-10，下一个编号 **GLN-11**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
+版本 0.1.0，提交到 GLN-11，下一个编号 **GLN-12**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
 
 已经能用：
 

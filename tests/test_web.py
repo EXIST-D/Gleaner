@@ -97,7 +97,10 @@ class WebAppTest(WorkspaceTestCase):
         self.assertNotIn(TOKEN_PLACEHOLDER, html)
 
     def test_static_files_are_whitelisted(self):
-        self.assertEqual(self.get("/static/app.js")[0].status, 200)
+        script = self.get("/static/app.js")[0]
+        self.assertEqual((script.status, script.content_type), (200, "text/javascript; charset=utf-8"))
+        self.assertEqual(self.get("/static/app.css")[0].content_type, "text/css; charset=utf-8")
+        self.assertEqual(self.get("/static/icon.svg")[0].content_type, "image/svg+xml")
         self.assertEqual(self.get("/static/../server.py")[0].status, 404)
         self.assertEqual(self.get("/static/missing.js")[0].status, 404)
 

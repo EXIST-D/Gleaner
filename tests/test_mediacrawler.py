@@ -28,7 +28,7 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(pairs["--type"], "search")
         self.assertEqual(pairs["--keywords"], "后端 面经,Java")
         self.assertEqual(pairs["--save_data_option"], "jsonl")
-        self.assertEqual(pairs["--save_data_path"], "/w/raw")
+        self.assertEqual(pairs["--save_data_path"], str(Path("/w/raw")))
         self.assertEqual(pairs["--get_comment"], "no")
         self.assertEqual(pairs["--get_sub_comment"], "no")
         self.assertEqual(pairs["--get_media"], "yes")

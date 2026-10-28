@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
 import re
 import secrets
 import webbrowser
@@ -47,6 +46,18 @@ from gleaner.web.progress import step_titles, steps_for
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 MAX_BODY_BYTES = 256 * 1024
+# mimetypes reads the Windows registry, which may not know .webp or may map .js to text/plain.
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+}
 MEDIA_SUFFIXES = {".webp", ".jpg", ".jpeg", ".png", ".gif"}
 PACK_ID = re.compile(r"^pack-\d{8}-\d{6}-[0-9a-f]{4}$")
 STATIC_FILES = {"index.html", "app.css", "app.js", "icon.svg"}
@@ -120,10 +131,7 @@ class WebApp:
             name = path.removeprefix("/static/")
             if name not in STATIC_FILES:
                 return error_response("找不到文件", HTTPStatus.NOT_FOUND)
-            content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
-            if content_type.startswith("text/") or name.endswith(".js"):
-                content_type += "; charset=utf-8"
-            return Response(200, _static(name), content_type)
+            return Response(200, _static(name), _content_type(name))
         if path.startswith("/media/"):
             return self._media(path.removeprefix("/media/"))
         if path.startswith("/bank-media/"):
@@ -156,15 +164,17 @@ class WebApp:
             or not target.is_file()
         ):
             return error_response("找不到图片", HTTPStatus.NOT_FOUND)
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        return Response(200, target.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+        return Response(
+            200, target.read_bytes(), _content_type(target.name), {"Cache-Control": "private, max-age=86400"}
+        )
 
     def _bank_media(self, name: str) -> Response:
         path = self._reader().media_path(name)
         if path is None:
             return error_response("找不到图片", HTTPStatus.NOT_FOUND)
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        return Response(200, path.read_bytes(), content_type, {"Cache-Control": "private, max-age=86400"})
+        return Response(
+            200, path.read_bytes(), _content_type(path.name), {"Cache-Control": "private, max-age=86400"}
+        )
 
     def _bank_export_download(self, name: str) -> Response:
         path = self._reader().export_path(name)
@@ -631,6 +641,10 @@ def _answer(answer: dict) -> dict:
 
 def _static(name: str) -> bytes:
     return resources.files("gleaner.web").joinpath("static", name).read_bytes()
+
+
+def _content_type(name: str) -> str:
+    return CONTENT_TYPES.get(Path(name).suffix.lower(), "application/octet-stream")
 
 
 def _first_line(message: str, limit: int = 160) -> str:
