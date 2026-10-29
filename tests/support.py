@@ -147,9 +147,9 @@ ZHIHU_ANSWER = {
 ZHIHU_ARTICLE = {
     "content_id": "600000001",
     "content_type": "article",
-    "content_text": "整理了虚构公司 Java 一面的题目。",
+    "content_text": "整理了虚构公司 Java 一面的题目：问&#34;为什么用 Redis&#34;。",
     "content_url": "https://zhuanlan.zhihu.com/p/600000001",
-    "title": "虚构公司 Java 一面",
+    "title": "虚构公司 Java 一面 &amp; 二面",
     "created_time": 1792627200,
     "source_keyword": "后端 面经",
 }

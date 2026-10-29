@@ -52,7 +52,7 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 | 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频，Gleaner 只用文案 |
 | B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字） |
 | 快手 | `no` | 20 | `kuaishou/` | 只有标题文案 |
-| 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起）；视频只有标题和简介，其他类型会跳过 |
+| 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起；`&#34;` 这类实体由 Gleaner 解码）；视频只有标题和简介，其他类型会跳过；作者昵称被 MediaCrawler 打码 |
 
 MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一页，其余按整页向下取整，
 所以抖音选 25 篇实际是 20 篇。`--url` 指定帖子时，各平台接受的格式和 MediaCrawler 的 `config/<平台>_config.py` 一致：
@@ -75,7 +75,25 @@ MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一
 
 - **退出码非 0 或没有产出数据**：通常是登录过期或触发了滑块验证。打开 Chrome 确认该平台仍是登录状态，
   必要时把 MediaCrawler 的 `HEADLESS` 设为 `False`，手动完成验证后再试。完整输出在 `runs/<run-id>/mediacrawler.log`。
-  抖音登录时日志里没有倒计时，MediaCrawler 最多等 10 分钟扫码。
+  抖音登录时日志里没有倒计时，MediaCrawler 最多等 10 分钟扫码；知乎的二维码只等 120 秒，过期就重新运行。
+- **抖音一启动就报 `Execution context was destroyed`**：抖音首页第一次写入 cookie 后会再刷新一次，
+  MediaCrawler（2026-10 的 main 分支）不等页面稳定就去读 `navigator.userAgent`，每次都在登录前退出。
+  在 `media_platform/douyin/core.py` 的 `start()` 里，`await self.context_page.goto(self.index_url)` 后面加一段等待：
+
+  ```python
+  for _ in range(10):
+      try:
+          await self.context_page.evaluate("() => navigator.userAgent")
+          break
+      except Exception:
+          try:
+              await self.context_page.wait_for_load_state("load", timeout=15000)
+          except Exception:
+              pass
+          await asyncio.sleep(1)
+  ```
+
+  这是对你本机 MediaCrawler 的修改，`git pull` 更新 MediaCrawler 前先 `git stash`，更新后再 `git stash pop`。
 - **小红书指定帖子**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
 - **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入所有平台的数据，不会重复抓取。
 - **MediaCrawler 改版**：命令行参数和每个平台的分页、是否下载媒体在 `src/gleaner/sources/mediacrawler.py`，

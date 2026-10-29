@@ -93,6 +93,8 @@ class PlatformAdapterTest(WorkspaceTestCase):
         self.assertEqual(answer.metrics, {"liked_count": 42, "comment_count": 3})
         article = posts["zhihu:article-600000001"]
         self.assertEqual(article.url, "https://zhuanlan.zhihu.com/p/600000001")
+        self.assertEqual(article.title, "虚构公司 Java 一面 & 二面")
+        self.assertEqual(article.body, '整理了虚构公司 Java 一面的题目：问"为什么用 Redis"。')
 
     def test_nowcoder_discussion_and_moment(self):
         posts, _ = self.posts()

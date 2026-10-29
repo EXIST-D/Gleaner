@@ -49,6 +49,12 @@ class ScreenerTest(unittest.TestCase):
         self.assertIn("promo:评论区扣", verdict.reasons)
         self.assertEqual(self.label("示例科技二面", "面完在评论区交流一下"), "candidate")
 
+    def test_free_material_card_is_promo(self):
+        body = "技术面被问了 Redis。【点击打开下方小卡片无偿领取Java后端面试全套资料】"
+        verdict = self.screener.screen(post("Java后端面试了8家公司", body))
+        self.assertEqual(verdict.label, "promo")
+        self.assertIn("promo:无偿领取", verdict.reasons)
+
     def test_question_collection_without_an_interview_event(self):
         self.assertEqual(self.label("Redis 高频题合集", "八股必背", images=2), "collection")
 

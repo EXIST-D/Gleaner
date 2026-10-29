@@ -241,7 +241,7 @@ def make_runner(
     return run
 
 
-_ERROR_LINE = re.compile(r"\b(\w+(?:Error|Exception)): (.+)$")
+_ERROR_LINE = re.compile(r"\b(\w*(?:Error|Exception)): (.+)$")
 _WRAPPER_ERRORS = {"RetryError", "CancelledError"}
 _HINTS = (
     (
@@ -251,6 +251,11 @@ _HINTS = (
     ),
     ("请通过验证", "触发了平台验证，需要在浏览器窗口里手动完成后再试"),
     ("Missing 'a1'", "浏览器里没有小红书的登录状态，需要重新扫码登录"),
+    (
+        "Execution context was destroyed",
+        "MediaCrawler 打开首页后页面又跳转了一次，读取页面时出错（抖音常见）。"
+        "按 docs/mediacrawler.md「常见问题」给 MediaCrawler 加上等待页面稳定的补丁后再试",
+    ),
 )
 
 

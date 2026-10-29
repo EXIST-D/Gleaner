@@ -112,6 +112,15 @@ class DiagnoseTest(WorkspaceTestCase):
         message = self.diagnose("Traceback:\nValueError: unexpected layout\n")
         self.assertEqual(message, "ValueError: unexpected layout")
 
+    def test_bare_playwright_error_is_found(self):
+        message = self.diagnose(
+            "    raise rewrite_error(error, f\"{parsed_st['apiName']}: {error}\") from None\n"
+            "playwright._impl._errors.Error: Page.evaluate: Execution context was destroyed, "
+            "most likely because of a navigation\n"
+        )
+        self.assertIn("等待页面稳定的补丁", message)
+        self.assertIn("Error: Page.evaluate: Execution context was destroyed", message)
+
     def test_falls_back_to_the_tail(self):
         self.assertEqual(self.diagnose("just a line\n"), "just a line")
         self.assertEqual(diagnose(self.workspace / "missing.log"), "没有日志")
