@@ -131,7 +131,7 @@ git push
 待办（大致按优先级）：
 
 1. 真实试抓抖音、B 站、快手各一次，按结果修正。
-2. 采集题库里还有 228 道题没有参考答案（后两批导入的牛客面经都还没有）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
+2. 采集题库里大部分题还没有参考答案（`ibank.py stats` 的 `answer_status.missing`；目前只有智能体领域补过）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
 3. 视频帖的口述内容：B 站、抖音、快手的面试复盘视频现在只导入标题和简介，可以接 Interview Bank 的 `ingest media` 本地转写。
 4. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。
