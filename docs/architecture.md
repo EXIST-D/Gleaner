@@ -11,7 +11,7 @@
 | `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；限速、重试、识别拦截 |
 | `adapters/exports.py` | 各平台导出的数据目录与图片目录对照；读取运行目录里的全部帖子；复制外部导出目录 |
 | `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片、解析“1.2万”这类计数、话题标签 |
-| `adapters/<平台>.py` | `xhs`、`douyin`、`bilibili`、`kuaishou`、`zhihu`、`nowcoder`：把一条原始记录转成 `Post` |
+| `adapters/<平台>.py` | `xhs`、`douyin`、`bilibili`、`zhihu`、`nowcoder`：把一条原始记录转成 `Post` |
 | `urls.py` | 各平台的稳定链接、去掉会话和分享参数、从链接反查帖子键 |
 | `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本 |
 | `screening.py` | 可解释的规则初筛 |
@@ -38,7 +38,6 @@
 | `xhs` | 小红书 | MediaCrawler | `mediacrawler-xhs` | 笔记 ID |
 | `dy` | 抖音 | MediaCrawler | `mediacrawler-dy` | aweme ID |
 | `bili` | B站 | MediaCrawler | `mediacrawler-bili` | av 号（数字） |
-| `ks` | 快手 | MediaCrawler | `mediacrawler-ks` | 作品 ID |
 | `zhihu` | 知乎 | MediaCrawler | `mediacrawler-zhihu` | `answer-…`、`article-…`、`zvideo-…`（三类 ID 各自编号，会重复） |
 | `nowcoder` | 牛客 | `sources/nowcoder.py` | `nowcoder` | 讨论帖数字 ID，或动态的 32 位 UUID（小写） |
 
@@ -91,7 +90,7 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 请求一次一个、有固定间隔和抖动，429 按 `Retry-After` 等待，遇到验证页就停下并记为降级，而不是换着法子绕过。
 原始记录去掉作者资料和 IP 属地，只留作者 ID 的哈希。
 
-**视频只用文字。** B 站、快手、知乎视频不下载媒体（`--get_media no`），只导入标题、简介或文案；
+**视频只用文字。** B 站、知乎视频不下载媒体（`--get_media no`），只导入标题、简介或文案；
 抖音和小红书需要下载图文帖的图片，MediaCrawler 的同一个开关也会下载视频，Gleaner 不读取它们，打包时也不带。
 
 **输出布局统一成 MediaCrawler 的样子。** 牛客读取器写出 `raw/nowcoder/jsonl/*.jsonl` 和 `raw/nowcoder/media/<ID>/001.jpg`，

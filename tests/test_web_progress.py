@@ -95,8 +95,7 @@ class PlatformProgressTest(unittest.TestCase):
             ["browser", "login", "search", "import", "done"],
         )
 
-    def test_kuaishou_and_zhihu_records(self):
-        ks = self.feed("ks", ["[store.kuaishou.update_kuaishou_video] Kuaishou video id:1, title:x"])
+    def test_zhihu_records(self):
         zhihu = self.feed(
             "zhihu",
             [
@@ -104,7 +103,7 @@ class PlatformProgressTest(unittest.TestCase):
                 "[store.zhihu.update_zhihu_content] zhihu content: {}",
             ],
         )
-        self.assertEqual((ks.notes, zhihu.notes, zhihu.step), (1, 1, "search"))
+        self.assertEqual((zhihu.notes, zhihu.step), (1, "search"))
 
     def test_nowcoder_steps_and_throttling(self):
         progress = self.feed("nowcoder", ["[nowcoder] 翻阅最新面经列表第 1 页", "Login successful"])

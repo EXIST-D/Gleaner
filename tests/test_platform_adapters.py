@@ -7,7 +7,6 @@ from tests.support import (
     BILI_VIDEO,
     DOUYIN_IMAGES,
     DOUYIN_VIDEO,
-    KS_VIDEO,
     NOWCODER_DISCUSS,
     NOWCODER_MOMENT,
     ZHIHU_ANSWER,
@@ -27,7 +26,7 @@ class PlatformAdapterTest(WorkspaceTestCase):
         write_images(self.raw, "dy", DOUYIN_IMAGES["aweme_id"], 2)
         write_images(self.raw, "dy", DOUYIN_VIDEO["aweme_id"], 1)
         write_records(self.raw, "bili", [BILI_VIDEO])
-        write_records(self.raw, "kuaishou", [KS_VIDEO])
+        write_records(self.raw, "kuaishou", [{"video_id": "3xexample0001", "title": "不支持的平台"}])
         write_records(
             self.raw, "zhihu", [ZHIHU_ANSWER, ZHIHU_ARTICLE, {"content_id": "1", "content_type": "pin"}]
         )
@@ -38,14 +37,12 @@ class PlatformAdapterTest(WorkspaceTestCase):
         report = ParseReport()
         return {post.key: post for post in iter_posts(self.raw, self.workspace, report)}, report
 
-    def test_reads_every_platform_and_skips_unknown_zhihu_types(self):
+    def test_reads_every_platform_and_skips_unknown_types(self):
         posts, report = self.posts()
-        self.assertEqual(report.records, 9)
+        self.assertEqual(report.records, 8)
         self.assertEqual(report.skipped, 1)
         self.assertIn("zhihu/search_contents_2026-10-27.jsonl:3 没有帖子 ID", report.errors)
-        self.assertEqual(
-            {post.platform for post in posts.values()}, {"dy", "bili", "ks", "zhihu", "nowcoder"}
-        )
+        self.assertEqual({post.platform for post in posts.values()}, {"dy", "bili", "zhihu", "nowcoder"})
 
     def test_douyin_image_set_and_video(self):
         posts, _ = self.posts()
@@ -76,13 +73,6 @@ class PlatformAdapterTest(WorkspaceTestCase):
                 "view_count": 15000,
             },
         )
-
-    def test_kuaishou_video(self):
-        post = self.posts()[0]["ks:3xexample0001"]
-        self.assertEqual(post.url, "https://www.kuaishou.com/short-video/3xexample0001")
-        self.assertEqual(post.tags, ["面经"])
-        self.assertEqual(post.metrics, {"liked_count": 15, "view_count": 2000})
-        self.assertEqual(post.published_at, "2026-10-21T00:00:00+00:00")
 
     def test_zhihu_answer_and_article(self):
         posts, _ = self.posts()
@@ -117,13 +107,14 @@ class PlatformAdapterTest(WorkspaceTestCase):
     def test_copy_export_maps_data_and_media_directories(self):
         target = self.workspace / "runs" / "r2" / "raw"
         found = copy_export(self.raw, target)
-        self.assertEqual(found, ["dy", "bili", "ks", "zhihu", "nowcoder"])
+        self.assertEqual(found, ["dy", "bili", "zhihu", "nowcoder"])
         self.assertTrue((target / "dy" / "media" / DOUYIN_IMAGES["aweme_id"] / "002.jpg").is_file())
         self.assertEqual(copy_export(self.raw / "douyin", self.workspace / "r3"), ["dy"])
         self.assertTrue(
             (self.workspace / "r3" / "dy" / "media" / DOUYIN_IMAGES["aweme_id"] / "001.jpg").is_file()
         )
-        self.assertEqual(len(content_files(target)), 5)
+        self.assertEqual(len(content_files(target)), 4)
+        self.assertFalse((target / "kuaishou").exists())
 
     def test_mixed_export_keeps_xhs(self):
         write_export(self.raw)

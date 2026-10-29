@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     imported = command(
         "import",
         cmd_import,
-        "导入已有的抓取输出目录（含 xhs/、douyin/、bili/、kuaishou/、zhihu/ 或 nowcoder/）",
+        "导入已有的抓取输出目录（含 xhs/、douyin/、bili/、zhihu/ 或 nowcoder/）",
     )
     imported.add_argument("source", type=Path)
 

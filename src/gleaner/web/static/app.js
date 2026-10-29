@@ -12,7 +12,6 @@ const URL_HINTS = {
   xhs: "每行一个链接，需要带 xsec_token，从浏览器地址栏复制",
   dy: "每行一个抖音视频或图文链接，例如 https://www.douyin.com/video/…",
   bili: "每行一个 B 站视频链接或 BV 号",
-  ks: "每行一个快手视频链接，例如 https://www.kuaishou.com/short-video/…",
   zhihu: "每行一个知乎回答、文章或视频链接",
   nowcoder: "每行一个牛客讨论帖或动态链接，例如 https://www.nowcoder.com/discuss/…",
 };
@@ -162,7 +161,7 @@ async function renderOverview() {
     <div class="hero">
       <div>
         <h1>${total ? `已经拾回 ${total} 篇面经帖子` : "还没有抓取过帖子"}</h1>
-        <p>${o.unpacked_candidates ? `其中 ${o.unpacked_candidates} 篇疑似真实面经还没打包，可以去「帖子」里挑选。` : "从「抓取」开始，按关键词收集小红书、抖音、B 站、快手、知乎和牛客上的真实面经。"}</p>
+        <p>${o.unpacked_candidates ? `其中 ${o.unpacked_candidates} 篇疑似真实面经还没打包，可以去「帖子」里挑选。` : "从「抓取」开始，按关键词收集小红书、抖音、B 站、知乎和牛客上的真实面经。"}</p>
       </div>
       <div class="head-actions">
         ${o.unpacked_candidates ? `<a class="btn" href="#posts">查看待打包</a>` : ""}

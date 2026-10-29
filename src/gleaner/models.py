@@ -25,7 +25,6 @@ PLATFORMS = {
     "xhs": Platform(code="xhs", label="小红书", host="xiaohongshu.com"),
     "dy": Platform(code="dy", label="抖音", host="douyin.com"),
     "bili": Platform(code="bili", label="B站", host="bilibili.com"),
-    "ks": Platform(code="ks", label="快手", host="kuaishou.com"),
     "zhihu": Platform(code="zhihu", label="知乎", host="zhihu.com"),
     "nowcoder": Platform(code="nowcoder", label="牛客", host="nowcoder.com"),
 }

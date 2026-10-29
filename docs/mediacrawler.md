@@ -1,6 +1,6 @@
 # MediaCrawler 接入
 
-Gleaner 调用你本机的 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 抓取小红书、抖音、B 站、快手和知乎，
+Gleaner 调用你本机的 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 抓取小红书、抖音、B 站和知乎，
 自己不包含它的代码。牛客不经过 MediaCrawler，见 [牛客读取](nowcoder.md)。
 以下内容按 2026 年 10 月的 MediaCrawler main 分支核对。
 
@@ -17,7 +17,7 @@ uv sync            # 需要先安装 uv 和 Node.js 16+
 MediaCrawler 默认用 CDP 模式驱动新版 Chrome（144+），不需要安装 Playwright 浏览器。登录有两种方式：
 
 - **独立窗口（推荐）**：把 `config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改成 `False`。
-  运行时 MediaCrawler 会自己打开一个 Chrome 窗口并显示对应平台的二维码，用手机上的小红书、抖音、哔哩哔哩、快手或知乎扫码；
+  运行时 MediaCrawler 会自己打开一个 Chrome 窗口并显示对应平台的二维码，用手机上的小红书、抖音、哔哩哔哩或知乎扫码；
   遇到验证码或滑块就在这个窗口里完成。登录状态按平台保存在 `MediaCrawler/browser_data/`，和你日常用的 Chrome 完全隔离，
   方便使用小号；登录没过期时下次不用再扫码。每个平台第一次抓取都要各扫一次。
 - **连接日常 Chrome**：保持 `CDP_CONNECT_EXISTING = True`，在 Chrome 地址栏手动打开 `chrome://inspect/#remote-debugging`，
@@ -39,7 +39,7 @@ MediaCrawler 默认用 CDP 模式驱动新版 Chrome（144+），不需要安装
 Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置影响：
 
 ```text
---platform xhs|dy|bili|ks|zhihu --type search|detail --save_data_option jsonl --save_data_path <工作区>/runs/<run-id>/raw
+--platform xhs|dy|bili|zhihu --type search|detail --save_data_option jsonl --save_data_path <工作区>/runs/<run-id>/raw
 --get_comment no --get_sub_comment no --get_media yes|no
 --crawler_max_notes_count <max_notes> --max_concurrency_num 1
 ```
@@ -51,12 +51,11 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 | 小红书 | `yes` | 20 | `xhs/` / `xhs/media/` | 很多面经的题只在图片里；视频帖会下载封面和视频，Gleaner 只用正文 |
 | 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频，Gleaner 只用文案 |
 | B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字；空简介是 `-`）；真实面试录音的题都在声音里，简介很少列题 |
-| 快手 | `no` | 20 | `kuaishou/` | 只有标题文案 |
 | 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起；`&#34;` 这类实体由 Gleaner 解码）；视频只有标题和简介，其他类型会跳过；作者昵称被 MediaCrawler 打码 |
 
 MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一页，其余按整页向下取整，
 所以抖音选 25 篇实际是 20 篇。`--url` 指定帖子时，各平台接受的格式和 MediaCrawler 的 `config/<平台>_config.py` 一致：
-小红书要带 `xsec_token` 的完整链接；抖音、快手是视频链接；B 站是视频链接或 BV 号；知乎是回答、文章或视频链接。
+小红书要带 `xsec_token` 的完整链接；抖音是视频或图文链接；B 站是视频链接或 BV 号；知乎是回答、文章或视频链接。
 
 ## Gleaner 配置
 
@@ -110,10 +109,8 @@ MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一
   ```
 
   这种情况 MediaCrawler 以退出码 0 结束，Gleaner 只能报“没有产出数据”，要看日志才知道原因。
-- **快手搜索结果对不上**：带空格的关键词（如“后端 面经”）会被拆成单字匹配，搜回来的是养生、佛经、游戏视频；
-  换成不带空格的词（如“Java面试”）结果才相关，但 2026-10 试抓时仍以培训广告和求职话题为主，没有真实面经。
 - **小红书指定帖子**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
-- **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入所有平台的数据，不会重复抓取。
+- **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入 Gleaner 支持的平台的数据（快手等其他平台的目录会跳过），不会重复抓取。
 - **MediaCrawler 改版**：命令行参数和每个平台的分页、是否下载媒体在 `src/gleaner/sources/mediacrawler.py`，
   目录对应在 `src/gleaner/adapters/exports.py`，导出字段在 `src/gleaner/adapters/<平台>.py`，
   日志里识别进度的标记在 `src/gleaner/web/progress.py`。

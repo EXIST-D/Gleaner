@@ -51,7 +51,7 @@ packs/<pack-id>/
 |---|---|
 | `source_url` | 去掉 `xsec_token`、`utm_*` 等参数后的链接，对应 Interview Bank 元数据 `source_url` |
 | `source_date` | 北京时间的发布日期，对应 `source_date`；**不是**面试日期 `event_date` |
-| `platform` / `platform_label` | `xhs` 小红书、`dy` 抖音、`bili` B站、`ks` 快手、`zhihu` 知乎、`nowcoder` 牛客；`platform_label` 对应 Interview Bank 元数据 `platform` |
+| `platform` / `platform_label` | `xhs` 小红书、`dy` 抖音、`bili` B站、`zhihu` 知乎、`nowcoder` 牛客；`platform_label` 对应 Interview Bank 元数据 `platform` |
 | `kind` | `image` 图文、`video` 视频、`text` 纯文字 |
 | `intake` | `images`：用 `ingest images` 导入图片目录；`text`：用 `web-intake` 导入 `body.txt` |
 | `body_questions` | 正文里像题目的行数：带编号或问号、含提问线索词、去掉编号后至少 6 个字 |

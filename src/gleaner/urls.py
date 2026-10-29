@@ -55,10 +55,6 @@ def bilibili_url(aid: str) -> str:
     return f"https://www.bilibili.com/video/av{aid}"
 
 
-def kuaishou_url(photo_id: str) -> str:
-    return f"https://www.kuaishou.com/short-video/{photo_id}"
-
-
 def zhihu_url(content_type: str, content_id: str, question_id: str = "") -> str:
     if content_type == "answer":
         if question_id:
@@ -80,7 +76,6 @@ _POST_URLS = (
     (re.compile(r"^(?:www\.)?xiaohongshu\.com/(?:explore|discovery/item)/([0-9a-zA-Z]+)$"), "xhs", "{}"),
     (re.compile(r"^(?:www\.)?douyin\.com/(?:video|note)/(\d+)$"), "dy", "{}"),
     (re.compile(r"^(?:www\.)?bilibili\.com/video/av(\d+)$"), "bili", "{}"),
-    (re.compile(r"^(?:www\.)?kuaishou\.com/short-video/([0-9a-zA-Z_-]+)$"), "ks", "{}"),
     (re.compile(r"^(?:www\.)?zhihu\.com/(?:question/\d+/)?answer/(\d+)$"), "zhihu", "answer-{}"),
     (re.compile(r"^zhuanlan\.zhihu\.com/p/(\d+)$"), "zhihu", "article-{}"),
     (re.compile(r"^(?:www\.)?zhihu\.com/zvideo/(\d+)$"), "zhihu", "zvideo-{}"),

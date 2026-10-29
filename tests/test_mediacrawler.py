@@ -57,7 +57,7 @@ class BuildCommandTest(unittest.TestCase):
 
         self.assertEqual(pairs("dy")["--platform"], "dy")
         self.assertEqual(pairs("dy")["--get_media"], "yes")
-        for platform in ("bili", "ks", "zhihu"):
+        for platform in ("bili", "zhihu"):
             self.assertEqual(
                 (pairs(platform)["--platform"], pairs(platform)["--get_media"]), (platform, "no")
             )

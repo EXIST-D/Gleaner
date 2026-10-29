@@ -39,7 +39,6 @@ class PostKeyTest(unittest.TestCase):
             "https://www.douyin.com/video/7300000000000000001": "dy:7300000000000000001",
             "https://www.douyin.com/note/7300000000000000002": "dy:7300000000000000002",
             "https://www.bilibili.com/video/av1150000001/": "bili:1150000001",
-            "https://www.kuaishou.com/short-video/3xexample0001": "ks:3xexample0001",
             "https://www.zhihu.com/question/2/answer/3": "zhihu:answer-3",
             "https://www.zhihu.com/answer/3": "zhihu:answer-3",
             "https://zhuanlan.zhihu.com/p/6": "zhihu:article-6",
@@ -55,6 +54,7 @@ class PostKeyTest(unittest.TestCase):
     def test_other_pages_have_no_key(self):
         self.assertIsNone(post_key("https://example.org/explore/1"))
         self.assertIsNone(post_key("https://www.bilibili.com/video/BV1xx411c7mD"))
+        self.assertIsNone(post_key("https://www.kuaishou.com/short-video/3xexample0001"))
         self.assertIsNone(post_key("aa01"))
         self.assertIsNone(post_key(None))
 

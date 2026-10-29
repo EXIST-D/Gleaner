@@ -22,7 +22,7 @@ STEP_TITLES = {
     "done": "完成",
 }
 _NOWCODER_TITLES = {"search": "翻阅面经列表"}
-_APPS = {"xhs": "小红书", "dy": "抖音", "bili": "哔哩哔哩", "ks": "快手", "zhihu": "知乎"}
+_APPS = {"xhs": "小红书", "dy": "抖音", "bili": "哔哩哔哩", "zhihu": "知乎"}
 
 _QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is \d+s", re.IGNORECASE)
 # Every platform's check_login_state retries 600 times a second apart; the "remaining time" in the log is fixed text.
@@ -30,7 +30,7 @@ LOGIN_WAIT_SECONDS = 600
 _LOGGED_IN = ("Login successful", "Login status confirmed", "Login state result: True")
 _VERIFY = ("请通过验证", "验证码", "captcha", "slider", "滑块")
 _SEARCHING = re.compile(r"Begin search|Current (?:search )?keyword|search \w+ keyword", re.IGNORECASE)
-_STORED = re.compile(r"update_(?:xhs_note|douyin_aweme|bilibili_video|kuaishou_video|zhihu_content)\]")
+_STORED = re.compile(r"update_(?:xhs_note|douyin_aweme|bilibili_video|zhihu_content)\]")
 
 
 def steps_for(platform: str, *, download: bool = True) -> tuple[str, ...]:

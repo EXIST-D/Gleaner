@@ -3,7 +3,7 @@
 # 不带 --keyword 运行 `gleaner crawl <平台>` 时使用的搜索关键词（所有平台共用）
 keywords = ["后端 面经", "Java 一面"]
 
-# 小红书、抖音、B 站、快手、知乎通过 MediaCrawler 抓取
+# 小红书、抖音、B 站、知乎通过 MediaCrawler 抓取
 [mediacrawler]
 # 你本机的 MediaCrawler 目录（https://github.com/NanmiCoder/MediaCrawler），各自下载安装。
 # 默认对应仓库根目录下的 MediaCrawler/（工作区是仓库下的 workspace/ 时；该目录已被 git 忽略）

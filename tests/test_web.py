@@ -110,7 +110,7 @@ class WebAppTest(WorkspaceTestCase):
         self.assertEqual(data["stats"]["posts"], 4)
         self.assertEqual(data["unpacked_candidates"], 3)
         platforms = {p["id"]: p for p in data["platforms"]}
-        self.assertEqual(list(platforms), ["xhs", "dy", "bili", "ks", "zhihu", "nowcoder"])
+        self.assertEqual(list(platforms), ["xhs", "dy", "bili", "zhihu", "nowcoder"])
         self.assertEqual((platforms["xhs"]["page_size"], platforms["dy"]["page_size"]), (20, 10))
         self.assertIsNone(platforms["nowcoder"]["page_size"])
         self.assertEqual(platforms["nowcoder"]["engine"], "nowcoder")

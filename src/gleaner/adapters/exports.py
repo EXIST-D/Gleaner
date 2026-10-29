@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from gleaner.adapters import bilibili, douyin, kuaishou, nowcoder, xhs, zhihu
+from gleaner.adapters import bilibili, douyin, nowcoder, xhs, zhihu
 from gleaner.adapters.common import IMAGE_FILE, ParseReport, read_records
 from gleaner.models import Post
 
@@ -29,7 +29,6 @@ EXPORTS = {
     "xhs": Export("xhs", "xhs", "xhs", xhs.to_post),
     "dy": Export("dy", "douyin", "dy", douyin.to_post),
     "bili": Export("bili", "bili", "bili", bilibili.to_post),
-    "ks": Export("ks", "kuaishou", "ks", kuaishou.to_post),
     "zhihu": Export("zhihu", "zhihu", None, zhihu.to_post),
     "nowcoder": Export("nowcoder", "nowcoder", "nowcoder", nowcoder.to_post),
 }

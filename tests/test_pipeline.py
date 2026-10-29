@@ -159,7 +159,7 @@ class PipelineTest(WorkspaceTestCase):
             with self.assertRaisesRegex(GleanerError, "B站"):
                 self.crawl(store, bili, platform="bili", now=NOW + timedelta(minutes=2))
             self.assertGreater(seconds_until_next_crawl(store, self.config, NOW, platform="nowcoder"), 0)
-            self.assertEqual(seconds_until_next_crawl(store, self.config, NOW, platform="ks"), 0)
+            self.assertEqual(seconds_until_next_crawl(store, self.config, NOW, platform="zhihu"), 0)
             platforms = {run.source: run.params["platform"] for run in store.runs()}
             self.assertEqual(
                 platforms, {"mediacrawler-xhs": "xhs", "mediacrawler-bili": "bili", "nowcoder": "nowcoder"}

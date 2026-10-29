@@ -122,16 +122,6 @@ BILI_VIDEO = {
     "video_url": "https://www.bilibili.com/video/av1150000001",
     "source_keyword": "Go 面经",
 }
-KS_VIDEO = {
-    "video_id": "3xexample0001",
-    "title": "示例公司前端一面 #面经",
-    "desc": "示例公司前端一面 #面经",
-    "create_time": 1792540800000,
-    "liked_count": "15",
-    "viewd_count": "2000",
-    "video_url": "https://www.kuaishou.com/short-video/3xexample0001",
-    "source_keyword": "前端 面经",
-}
 ZHIHU_ANSWER = {
     "content_id": "300000001",
     "content_type": "answer",

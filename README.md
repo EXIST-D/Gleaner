@@ -1,6 +1,6 @@
 # Gleaner · 拾穗
 
-把散落在小红书、抖音、B 站、快手、知乎和牛客上的真实面经一穗一穗捡回来：前五个平台调用你本机的
+把散落在小红书、抖音、B 站、知乎和牛客上的真实面经一穗一穗捡回来：前四个平台调用你本机的
 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 小批量抓取，牛客由 Gleaner 直接读取公开的面经帖子；
 按帖子去重、规则初筛，再打成素材包，交给 [Interview Bank](https://github.com/EXIST-D/Interview-bank) 导入一个**独立的采集题库**。
 
@@ -14,7 +14,6 @@ Gleaner 只负责“发现 → 抓取 → 筛选 → 打包”。题目抽取、
 | 小红书 | `xhs` | MediaCrawler，扫码登录；搜索每页 20 篇 | 正文 + 图文帖的图片 |
 | 抖音 | `dy` | MediaCrawler，扫码登录；搜索每页 10 篇 | 文案 + 图集的图片；视频帖只用文案 |
 | B 站 | `bili` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题和简介（不下载视频） |
-| 快手 | `ks` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题文案（不下载视频） |
 | 知乎 | `zhihu` | MediaCrawler，扫码登录；搜索每页 20 条 | 回答、文章的纯文字正文 |
 | 牛客 | `nowcoder` | Gleaner 直接读取，不登录、不用站内搜索 | 讨论帖和动态的正文 + 图片 |
 
@@ -85,7 +84,7 @@ gleaner pack --limit 20
 ```
 
 已经用 MediaCrawler 的 WebUI 或命令行抓过的数据，可以直接导入：`gleaner import <MediaCrawler 的 data 目录>`，
-里面的 `xhs/`、`douyin/`、`bili/`、`kuaishou/`、`zhihu/` 会一起导入。
+里面的 `xhs/`、`douyin/`、`bili/`、`zhihu/` 会一起导入（其他平台的目录会跳过）。
 
 帖子键是 `平台代码:帖子 ID`，例如 `xhs:6650a1b2c3d4`、`dy:7300…`、`bili:115…`（av 号）、
 `zhihu:answer-…` / `zhihu:article-…`、`nowcoder:945…`（讨论帖）或 `nowcoder:<32 位 UUID>`（动态）。
@@ -126,7 +125,7 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 |---|---|
 | `init` | 创建工作区：`gleaner.toml`、`gleaner.db`、`runs/`、`packs/` |
 | `doctor` | 检查 MediaCrawler 目录与启动命令、默认关键词、`ibank.py`、采集题库 |
-| `crawl <平台>` | `xhs` `dy` `bili` `ks` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛 |
+| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛 |
 | `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
 | `screen [--all]` | 对未打标签的帖子初筛；`--all` 重判以前的规则标签，人工标签不动 |
 | `list` / `show` | 查看帖子、标签和初筛理由；`list --platform` 按平台筛选 |
@@ -185,7 +184,7 @@ CI 在 Windows、macOS、Linux × Python 3.11–3.13 上运行测试和 lint。�
 
 ## 计划
 
-- 视频帖的口述内容：B 站、抖音、快手的面试复盘视频目前只导入标题和简介，以后可以交给 Interview Bank 的
+- 视频帖的口述内容：B 站、抖音的面试复盘视频目前只导入标题和简介，以后可以交给 Interview Bank 的
   `ingest media` 本地转写
 - 可选的大模型复判：规则拿不准的帖子再交给模型判断
 - 采集题库与个人题库的覆盖对照

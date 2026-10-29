@@ -30,7 +30,7 @@ Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/b
 
 两者都不进本仓库，各自放在仓库目录下（已被 git 忽略），默认配置就指向这些位置。
 
-- **MediaCrawler**：抓小红书、抖音、B 站、快手、知乎时需要；只抓牛客不需要。
+- **MediaCrawler**：抓小红书、抖音、B 站、知乎时需要；只抓牛客不需要。
   ```bash
   git clone https://github.com/NanmiCoder/MediaCrawler.git MediaCrawler
   (cd MediaCrawler && uv sync)
@@ -122,8 +122,9 @@ git push
 
 已经能用：
 
-- 小红书、牛客、知乎（真实抓取导入过），B 站、快手（真实试抓过，字段和进度识别都对）的抓取、去重、初筛、打包，
-  网页控制台的全部页面。B 站的题在视频声音里、快手搜不到真实面经，目前都没有可导入的文字。
+- 小红书、牛客、知乎（真实抓取导入过），B 站（真实试抓过，字段和进度识别都对）的抓取、去重、初筛、打包，
+  网页控制台的全部页面。B 站的题在视频声音里，目前没有可导入的文字。
+- 快手试抓过两个关键词，40 个视频全是无关内容或引流，已经不再支持。
 - 抖音：参数、日志标记和导出字段按 MediaCrawler 源码核对，用合成数据测试，**还没有真实抓到过数据**
   （要先给 MediaCrawler 打 `docs/mediacrawler.md` 里的补丁，已走到扫码登录）。真抓时重点看进度条是否识别出各步骤
   （`web/progress.py`）、导入的字段是否齐全（`adapters/dy.py`）；有出入就按真实输出改，
@@ -134,6 +135,6 @@ git push
 1. 真实试抓抖音一次，按结果修正。
 2. 采集题库里大部分题还没有参考答案（`ibank.py stats` 的 `answer_status.missing`；目前只有智能体领域补过）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
-3. 视频帖的口述内容：B 站、抖音、快手的面试复盘视频现在只导入标题和简介，可以接 Interview Bank 的 `ingest media` 本地转写。
+3. 视频帖的口述内容：B 站、抖音的面试复盘视频现在只导入标题和简介，可以接 Interview Bank 的 `ingest media` 本地转写。
 4. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。
 5. 采集题库与个人题库的覆盖对照。

@@ -3,7 +3,7 @@
 MediaCrawler is under a non-commercial learning license and is never vendored: Gleaner only runs the user's
 own checkout. Verified against NanmiCoder/MediaCrawler main as of 2026-10:
 
-- `main.py --platform xhs|dy|bili|ks|zhihu --type search|detail` with `--keywords` or `--specified_id`
+- `main.py --platform xhs|dy|bili|zhihu --type search|detail` with `--keywords` or `--specified_id`
   (comma separated; links or IDs as each platform's `config/*_config.py` shows).
 - `--save_data_option jsonl --save_data_path <dir>` writes `<dir>/<data dir>/jsonl/<type>_contents_<date>.jsonl`
   (`adapters/exports.py` lists the data and media directory of each platform).
@@ -49,7 +49,6 @@ PLATFORMS = {
     "xhs": CrawlerPlatform("xhs", SEARCH_PAGE_SIZE, get_media=True),
     "dy": CrawlerPlatform("dy", 10, get_media=True),
     "bili": CrawlerPlatform("bili", SEARCH_PAGE_SIZE, get_media=False),
-    "ks": CrawlerPlatform("ks", SEARCH_PAGE_SIZE, get_media=False),
     "zhihu": CrawlerPlatform("zhihu", SEARCH_PAGE_SIZE, get_media=False),
 }
 
