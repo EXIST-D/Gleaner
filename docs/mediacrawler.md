@@ -50,7 +50,7 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 |---|---|---|---|---|
 | 小红书 | `yes` | 20 | `xhs/` / `xhs/media/` | 很多面经的题只在图片里；视频帖会下载封面和视频，Gleaner 只用正文 |
 | 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频，Gleaner 只用文案 |
-| B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字） |
+| B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字；空简介是 `-`）；真实面试录音的题都在声音里，简介很少列题 |
 | 快手 | `no` | 20 | `kuaishou/` | 只有标题文案 |
 | 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起；`&#34;` 这类实体由 Gleaner 解码）；视频只有标题和简介，其他类型会跳过；作者昵称被 MediaCrawler 打码 |
 
@@ -75,7 +75,8 @@ MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一
 
 - **退出码非 0 或没有产出数据**：通常是登录过期或触发了滑块验证。打开 Chrome 确认该平台仍是登录状态，
   必要时把 MediaCrawler 的 `HEADLESS` 设为 `False`，手动完成验证后再试。完整输出在 `runs/<run-id>/mediacrawler.log`。
-  抖音登录时日志里没有倒计时，MediaCrawler 最多等 10 分钟扫码；知乎的二维码只等 120 秒，过期就重新运行。
+  每个平台的 MediaCrawler 都最多等 10 分钟扫码（每秒检查一次登录状态，共 600 次）；日志里的
+  “remaining time is 20s / 120s”是写死的文字，网页按 10 分钟倒计时。
 - **抖音一启动就报 `Execution context was destroyed`**：抖音首页第一次写入 cookie 后会再刷新一次，
   MediaCrawler（2026-10 的 main 分支）不等页面稳定就去读 `navigator.userAgent`，每次都在登录前退出。
   在 `media_platform/douyin/core.py` 的 `start()` 里，`await self.context_page.goto(self.index_url)` 后面加一段等待：
@@ -94,6 +95,23 @@ MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一
   ```
 
   这是对你本机 MediaCrawler 的修改，`git pull` 更新 MediaCrawler 前先 `git stash`，更新后再 `git stash pop`。
+- **B 站日志里出现 `login failed , have not found qrcode`，没等扫码就退出**：登录框先插入二维码的 `<img>`，
+  稍后才填上图片；MediaCrawler 点开登录框后只等 1 秒，读到的是空图片。在 `media_platform/bilibili/login.py`
+  的 `login_by_qrcode()` 里，点击登录按钮后的 `await asyncio.sleep(1)` 后面加一段等待（同样是本机修改）：
+
+  ```python
+  try:
+      await self.context_page.wait_for_function(
+          "() => { const img = document.querySelector('.login-scan-box img'); return !!(img && img.src); }",
+          timeout=30_000,
+      )
+  except PlaywrightTimeoutError:
+      pass
+  ```
+
+  这种情况 MediaCrawler 以退出码 0 结束，Gleaner 只能报“没有产出数据”，要看日志才知道原因。
+- **快手搜索结果对不上**：带空格的关键词（如“后端 面经”）会被拆成单字匹配，搜回来的是养生、佛经、游戏视频；
+  换成不带空格的词（如“Java面试”）结果才相关，但 2026-10 试抓时仍以培训广告和求职话题为主，没有真实面经。
 - **小红书指定帖子**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
 - **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入所有平台的数据，不会重复抓取。
 - **MediaCrawler 改版**：命令行参数和每个平台的分页、是否下载媒体在 `src/gleaner/sources/mediacrawler.py`，

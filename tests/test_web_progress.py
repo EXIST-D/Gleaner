@@ -27,7 +27,7 @@ class ProgressTest(unittest.TestCase):
         progress = self.feed(REAL_RUN)
         self.assertEqual(progress.step, "login")
         self.assertEqual(progress.attention, "qr")
-        self.assertEqual(progress.qr_seconds, 120)
+        self.assertEqual(progress.qr_seconds, 600)
         self.assertIn("二维码", progress.as_dict()["attention_title"])
 
     def test_login_clears_the_call_to_action_and_counts_work(self):
@@ -60,9 +60,9 @@ class PlatformProgressTest(unittest.TestCase):
             progress.feed(line)
         return progress
 
-    def test_douyin_asks_for_a_scan_without_a_countdown(self):
+    def test_douyin_asks_for_a_scan_and_counts_down_the_real_wait(self):
         progress = self.feed("dy", ["[DouYinLogin.login_by_qrcode] Begin login douyin by qrcode..."])
-        self.assertEqual((progress.step, progress.attention, progress.qr_seconds), ("login", "qr", None))
+        self.assertEqual((progress.step, progress.attention, progress.qr_seconds), ("login", "qr", 600))
         self.assertIn("抖音", progress.as_dict()["attention_title"])
         progress.feed("[DouYinLogin.check_page_display_slider] slider verify failed, retry ...")
         self.assertEqual(progress.attention, "verify")
@@ -71,6 +71,14 @@ class PlatformProgressTest(unittest.TestCase):
         self.assertEqual((progress.step, progress.notes, progress.attention), ("search", 1, None))
 
     def test_bilibili_countdown_and_no_download_step(self):
+        waiting = self.feed(
+            "bili",
+            [
+                "[BilibiliLogin.login_by_qrcode] Begin login bilibili by qrcode ...",
+                "[BilibiliLogin.login_by_qrcode] Waiting for scan code login, remaining time is 20s",
+            ],
+        )
+        self.assertEqual((waiting.attention, waiting.qr_seconds), ("qr", 600))
         progress = self.feed(
             "bili",
             [

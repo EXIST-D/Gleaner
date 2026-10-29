@@ -24,7 +24,9 @@ STEP_TITLES = {
 _NOWCODER_TITLES = {"search": "翻阅面经列表"}
 _APPS = {"xhs": "小红书", "dy": "抖音", "bili": "哔哩哔哩", "ks": "快手", "zhihu": "知乎"}
 
-_QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is (\d+)s", re.IGNORECASE)
+_QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is \d+s", re.IGNORECASE)
+# Every platform's check_login_state retries 600 times a second apart; the "remaining time" in the log is fixed text.
+LOGIN_WAIT_SECONDS = 600
 _LOGGED_IN = ("Login successful", "Login status confirmed", "Login state result: True")
 _VERIFY = ("请通过验证", "验证码", "captcha", "slider", "滑块")
 _SEARCHING = re.compile(r"Begin search|Current (?:search )?keyword|search \w+ keyword", re.IGNORECASE)
@@ -75,13 +77,12 @@ class Progress:
             self._feed_mediacrawler(line)
 
     def _feed_mediacrawler(self, line: str) -> None:
-        if match := _QR_COUNTDOWN.search(line):
+        if _QR_COUNTDOWN.search(line) or ("Begin login" in line and "by qrcode" in line):
             self._advance("login")
-            self.attention, self.qr_seconds = "qr", int(match.group(1))
+            self.attention = "qr"
+            self.qr_seconds = self.qr_seconds or LOGIN_WAIT_SECONDS
         elif "Begin login" in line:
             self._advance("login")
-            if "by qrcode" in line:
-                self.attention = "qr"
         elif any(marker in line for marker in _LOGGED_IN):
             self.attention, self.qr_seconds = None, None
             self._advance("search")
