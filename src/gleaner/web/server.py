@@ -26,6 +26,7 @@ from gleaner.bank import (
 from gleaner.bodytext import choose_intake, listed_questions
 from gleaner.checks import environment_checks
 from gleaner.config import MAX_NOTES_CAP, Config, load_config
+from gleaner.devnotes import add_feedback, dev_status
 from gleaner.errors import GleanerError
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
 from gleaner.packer import build_pack
@@ -149,6 +150,7 @@ class WebApp:
             "/api/bank/question": self.bank_question,
             "/api/bank/exports": self.bank_exports,
             "/api/bank/export-file": self.bank_export_file,
+            "/api/dev": self.dev,
         }
         handler = routes.get(path)
         if handler is None:
@@ -424,6 +426,9 @@ class WebApp:
             }
         }
 
+    def dev(self, _query: dict) -> dict:
+        return dev_status(self.workspace)
+
     def crawl_status(self, query: dict) -> dict:
         job = self.jobs.current
         since = int(query.get("since", "0") or 0)
@@ -523,6 +528,11 @@ class WebApp:
             with Store.open(self.workspace) as store:
                 result = build_pack(store, config, now=utc_now(), keys=keys)
             return json_response({"ok": True, "pack": result.as_dict()})
+        if path == "/api/feedback":
+            entry = add_feedback(
+                self.workspace, str(payload.get("text", "")), str(payload.get("topic", "")), now=utc_now()
+            )
+            return json_response({"ok": True, "entry": entry})
         return error_response("找不到接口", HTTPStatus.NOT_FOUND)
 
     # Helpers

@@ -240,6 +240,9 @@ input:focus, textarea:focus, .chips:focus-within {
 .segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .segmented.platforms { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); }
 .segmented.platforms button { padding: 6px 4px; }
+.segmented.topics { display: flex; flex-wrap: wrap; }
+.segmented.topics button { padding: 6px 10px; }
+textarea.prose { font-family: inherit; font-size: 14px; line-height: 1.6; }
 
 .chips {
   display: flex;
@@ -567,6 +570,13 @@ details.advanced[open] summary { margin-bottom: 8px; }
 .markdown pre .copy { position: absolute; top: 8px; right: 8px; }
 .markdown ol, .markdown ul { padding-left: 22px; }
 .markdown a { color: var(--accent-strong); }
+.pill.mono { font-family: var(--mono); font-size: 12px; }
+.list-row.commit { align-items: flex-start; }
+.list-row.commit .title { white-space: normal; font-weight: 500; font-size: 13.5px; line-height: 1.5; }
+.list-row.commit .faint { white-space: nowrap; font-size: 13px; }
+.feedback-list { margin-top: 18px; }
+.feedback { padding: 12px 0; border-top: 1px solid var(--border); }
+.feedback .markdown p { margin: 4px 0 0; }
 
 /* Bank */
 

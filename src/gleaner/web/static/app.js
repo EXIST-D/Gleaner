@@ -3,7 +3,8 @@
 /* ---------- Helpers ---------- */
 
 const TOKEN = document.querySelector('meta[name="gleaner-token"]').content;
-const VIEWS = ["overview", "crawl", "posts", "packs", "bank"];
+const VIEWS = ["overview", "crawl", "posts", "packs", "bank", "progress"];
+const AUTO_REFRESH_MS = 30000;
 const LABEL_ORDER = ["candidate", "collection", "promo", "unclear", "irrelevant"];
 const NOWCODER_COUNTS = [5, 10, 20, 40];
 const METRIC_TITLES = { liked_count: "赞", collected_count: "收藏", comment_count: "评论", share_count: "分享", view_count: "播放/浏览" };
@@ -93,6 +94,7 @@ const state = {
   tick: null,
   posts: { label: "candidate", platform: "", packed: "no", q: "", data: null },
   bank: { data: null, topic: "", company: "", q: "", showExcluded: false },
+  progress: { data: null, topic: "其他", draft: "" },
   selected: new Set(),
 };
 
@@ -115,6 +117,7 @@ async function show(view) {
     if (view === "posts") await renderPosts();
     if (view === "packs") await renderPacks();
     if (view === "bank") await renderBank();
+    if (view === "progress") await renderProgress();
     const params = new URLSearchParams(location.hash.split("?")[1] || "");
     const open = params.get("open");
     if (open && view === "posts") await openPost(open);
@@ -724,6 +727,92 @@ async function openPack(id) {
   }
 }
 
+/* ---------- Progress ---------- */
+
+async function renderProgress() {
+  const p = state.progress;
+  p.data = await api("/api/dev");
+  const d = p.data;
+  const repoState = [
+    d.unpushed ? `${d.unpushed} 个提交未推送` : "",
+    d.uncommitted ? `${d.uncommitted} 个文件未提交` : "",
+  ].filter(Boolean).join(" · ");
+  $("#view-progress").innerHTML = `
+    <div class="view-head">
+      <div><h1>开发进度</h1><p>开发记录、还没发布的改动和最近的提交，每 30 秒自动刷新；有意见写在右边，会存进工作区留给下次开发。</p></div>
+      <div class="head-actions"><button class="btn" data-action="refresh-progress">刷新</button></div>
+    </div>
+    <div class="grid two">
+      <div class="stack">
+        <div class="card">
+          <h2>开发记录 ${d.notes ? `<small title="${esc(d.notes.path)}">${esc(d.notes.path.split(/[\\/]/).pop())}</small>` : ""}</h2>
+          ${d.notes ? `<div class="markdown">${renderMarkdown(d.notes.markdown)}</div>` : `<div class="empty">没有找到 workspace/开发进度.md 或开发手册</div>`}
+        </div>
+        <div class="card">
+          <h2>还没发布的改动 <small>CHANGELOG.md</small></h2>
+          ${d.unreleased ? `<div class="markdown">${renderMarkdown(d.unreleased)}</div>` : `<div class="empty">没有未发布的改动</div>`}
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <h2>提意见</h2>
+          <div class="field">
+            <span class="label">关于</span>
+            <div class="segmented topics">
+              ${d.feedback_topics.map((t) => `<button data-action="feedback-topic" data-topic="${esc(t)}" class="${p.topic === t ? "active" : ""}">${esc(t)}</button>`).join("")}
+            </div>
+          </div>
+          <div class="field">
+            <textarea id="feedback-input" class="prose" placeholder="想改的地方、发现的问题、新的想法……">${esc(p.draft)}</textarea>
+            <span class="help">保存在 ${esc(d.feedback_file)}</span>
+          </div>
+          <button class="btn primary" data-action="send-feedback">保存意见</button>
+          ${d.feedback.length ? `<div class="list feedback-list">${d.feedback.map((f) => `
+            <div class="feedback">
+              <div class="sub"><span class="pill">${esc(f.topic || "其他")}</span> ${esc(f.time)}</div>
+              <div class="markdown">${renderMarkdown(f.text)}</div>
+            </div>`).join("")}</div>` : ""}
+        </div>
+        <div class="card">
+          <h2>最近提交 ${repoState ? `<small>${esc(repoState)}</small>` : ""}</h2>
+          <div class="list">
+            ${d.commits.length ? d.commits.map((c) => `
+              <div class="list-row commit">
+                <span class="pill mono">${esc(c.hash)}</span>
+                <div class="grow"><div class="title">${esc(c.subject)}</div></div>
+                <span class="faint" title="${esc(fmtTime(c.date))}">${esc(fmtAgo(c.date))}</span>
+              </div>`).join("") : `<div class="empty">${d.repo ? "还没有提交" : "工作区不在 git 仓库里"}</div>`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function sendFeedback() {
+  const p = state.progress;
+  const text = ($("#feedback-input")?.value || "").trim();
+  if (!text) {
+    toast("先写点内容", { error: true });
+    return;
+  }
+  try {
+    await api("/api/feedback", { method: "POST", body: { text, topic: p.topic } });
+    p.draft = "";
+    toast("意见已保存");
+    await renderProgress();
+  } catch (error) {
+    toast(error.message, { error: true });
+  }
+}
+
+/* Read-only pages refresh themselves so a crawl or a commit shows up without reloading. */
+function autoRefresh() {
+  if (document.hidden || $("#drawer").classList.contains("open")) return;
+  if (state.view === "overview") renderOverview().catch(() => {});
+  const typing = document.activeElement?.id === "feedback-input";
+  if (state.view === "progress" && !typing && !state.progress.draft) renderProgress().catch(() => {});
+}
+
 const ESCAPABLE = /\\([\\`*_{}[\]()#+\-.!|>~])/g;
 
 function inline(text) {
@@ -779,6 +868,10 @@ function renderMarkdown(markdown, { headingIds = false } = {}) {
     if (/^<\/details>\s*$/.test(line)) {
       closeList();
       out.push("</details>");
+      continue;
+    }
+    if (list && /^\s{2,}\S/.test(line)) {
+      out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, ` ${inline(line.trim())}</li>`);
       continue;
     }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
@@ -1087,6 +1180,12 @@ document.addEventListener("click", (event) => {
     "bank-topic": () => { state.bank.topic = target.dataset.topic; renderBank(); },
     "bank-company": () => { state.bank.company = target.dataset.company; renderBank(); },
     "copy": () => copy(target.dataset.text),
+    "refresh-progress": () => renderProgress().catch((error) => toast(error.message, { error: true })),
+    "feedback-topic": () => {
+      state.progress.topic = target.dataset.topic;
+      document.querySelectorAll(".segmented.topics button").forEach((b) => b.classList.toggle("active", b === target));
+    },
+    "send-feedback": sendFeedback,
     "crawl-mode": () => { state.crawl.mode = target.dataset.mode; renderCrawlForm(); },
     "crawl-pages": () => { state.crawl.pages = Number(target.dataset.pages); renderCrawlForm(); },
     "crawl-count": () => { state.crawl.count = Number(target.dataset.count); renderCrawlForm(); },
@@ -1133,6 +1232,8 @@ document.addEventListener("input", (event) => {
   } else if (event.target.id === "post-search") {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.posts.q = event.target.value.trim(); renderPosts(); }, 250);
+  } else if (event.target.id === "feedback-input") {
+    state.progress.draft = event.target.value;
   } else if (event.target.id === "bank-search") {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.bank.q = event.target.value.trim(); renderBank(); }, 250);
@@ -1165,6 +1266,7 @@ state.tick = setInterval(() => {
   if (elapsed && state.job && state.job.state === "running") elapsed.textContent = fmtDuration((Date.now() - new Date(state.job.started_at)) / 1000);
   if (!state.pollTimer) updateStartButton();
 }, 1000);
+setInterval(autoRefresh, AUTO_REFRESH_MS);
 
 (async function init() {
   try {

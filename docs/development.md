@@ -21,7 +21,7 @@ git config user.name EXIST-D
 git config user.email 72126689+EXIST-D@users.noreply.github.com
 ```
 
-然后跑一遍完整检查（见第 4 节），153 个测试全过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
+然后跑一遍完整检查（见第 4 节），158 个测试全过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
 Interview Bank 或网络。
 
 Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/bin/` 换掉即可；提交钩子由 Git for Windows 自带的 sh 执行。
@@ -70,6 +70,7 @@ SQLite 数据库和题库都没有合并工具。**同一时间只在一台电�
 
 ```bash
 git pull --rebase                         # 先同步另一台电脑推上来的提交
+# 再看 workspace/意见.md（网页「进度」页写下的意见），处理完的条目在后面注明“已处理”
 
 # ……改代码、补测试、更新文档……
 
@@ -78,7 +79,7 @@ git pull --rebase                         # 先同步另一台电脑推上来的
   && node --check src/gleaner/web/static/app.js \
   && .venv/bin/python -B -X utf8 -m unittest discover -s tests -t .
 
-git add -A && git commit -m "GLN-14: <英文的一句话说明>"
+git add -A && git commit -m "GLN-15: <英文的一句话说明>"
 git push
 ```
 
@@ -117,7 +118,7 @@ git push
 
 ## 7. 当前状态
 
-版本 0.1.0，提交到 GLN-13，下一个编号 **GLN-14**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
+版本 0.1.0，提交到 GLN-14，下一个编号 **GLN-15**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
 
 已经能用：
 
@@ -129,7 +130,7 @@ git push
 待办（大致按优先级）：
 
 1. 真实试抓抖音、B 站、快手、知乎各一次，按结果修正。
-2. 采集题库里还有 39 道题没有参考答案。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
+2. 采集题库里还有 173 道题没有参考答案（第二批导入的牛客面经都还没有）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
 3. 视频帖的口述内容：B 站、抖音、快手的面试复盘视频现在只导入标题和简介，可以接 Interview Bank 的 `ingest media` 本地转写。
 4. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。

@@ -20,6 +20,7 @@
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor` 和网页共用 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
+| `devnotes.py` | 进度页的数据：工作区的 `开发进度.md`（或开发手册的「当前状态」）、CHANGELOG 的「未发布」、`git log` 和未提交/未推送数；意见追加到工作区的 `意见.md` |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
 | `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止（MediaCrawler 结束子进程，牛客在下一个请求前停下） |
 | `web/progress.py` | 按平台给出步骤，从日志识别当前步骤和需要人操作的提示（扫码、验证、确认框、牛客限流等待） |

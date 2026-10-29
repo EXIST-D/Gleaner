@@ -179,6 +179,19 @@ class WebAppTest(WorkspaceTestCase):
         self.assertEqual(self.get("/api/pack?id=../../etc")[0].status, 400)
         self.assertEqual(self.post("/api/pack", {"keys": []})[0].status, 400)
 
+    def test_progress_page_and_feedback(self):
+        (self.ws / "开发进度.md").write_text("# 本机进度\n", encoding="utf-8")
+        _, data = self.get("/api/dev")
+        self.assertEqual((data["notes"]["markdown"], data["feedback"]), ("# 本机进度\n", []))
+        self.assertIn("帖子", data["feedback_topics"])
+        self.assertEqual(
+            self.post("/api/feedback", {"text": "好", "topic": "帖子"}, token="wrong")[0].status, 403
+        )
+        response, saved = self.post("/api/feedback", {"text": "帖子卡片想显示公司", "topic": "帖子"})
+        self.assertEqual(response.status, 200, saved)
+        self.assertEqual(self.get("/api/dev")[1]["feedback"][0]["text"], "帖子卡片想显示公司")
+        self.assertIn("不能为空", self.post("/api/feedback", {"text": " ", "topic": "帖子"})[1]["error"])
+
     def test_crawl_requests_are_validated(self):
         self.assertIn("至少", self.post("/api/crawl", {"keywords": []})[1]["error"])
         self.assertIn("逗号", self.post("/api/crawl", {"keywords": ["后端,面经"]})[1]["error"])

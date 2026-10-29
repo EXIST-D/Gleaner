@@ -2,6 +2,7 @@
 
 开始之前先读 [docs/development.md](docs/development.md)（环境、流程、约定、当前状态和待办），
 再读 [docs/architecture.md](docs/architecture.md) 里和任务相关的模块。
+`workspace/意见.md` 存在的话也先看：那是用户在网页「进度」页写下的意见。
 
 - 回答用简体中文；代码、注释和提交信息用英文，面向用户的提示和网页文字用简体中文。
 - 提交信息以 `GLN-N: ` 开头，编号接着 `git log` 里最大的；不要用 `--no-verify` 绕过钩子。
