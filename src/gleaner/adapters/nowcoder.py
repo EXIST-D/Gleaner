@@ -180,11 +180,15 @@ class _Text(HTMLParser):
                     self.newline(keep_empty=True)
                 self.write(part)
             return
-        text = _SPACES.sub(" ", data)
-        if not self.line:
-            text = text.lstrip()
-        if text:
-            self.write(text)
+        # Nowcoder's editor keeps line breaks as "\n" inside the text and the page shows them (pre-wrap).
+        for number, part in enumerate(data.split("\n")):
+            if number:
+                self.newline()
+            text = _SPACES.sub(" ", part)
+            if not self.line:
+                text = text.lstrip()
+            if text:
+                self.write(text)
 
     def write(self, text: str) -> None:
         if not self.line and self.prefix:

@@ -140,6 +140,10 @@ class NowcoderTextTest(unittest.TestCase):
             html_to_text(html), "二面\n- 自我介绍\n- 项目\nfor i in range(3):\n    print(i)\n轮次 | 时长"
         )
 
+    def test_line_breaks_written_inside_the_text_are_kept(self):
+        html = '<p><span style="font-size: 16px;">一面\n0. 实习相关\n1. HashMap  如何扩容\n\n- -\n二面</span></p>\n<p>反问</p>'
+        self.assertEqual(html_to_text(html), "一面\n0. 实习相关\n1. HashMap 如何扩容\n- -\n二面\n反问")
+
     def test_moment_text_is_not_parsed_as_html(self):
         self.assertEqual(
             moment_text("Map&lt;K, V&gt; 和 <List>\n\n\n\n下一段"), "Map<K, V> 和 <List>\n\n下一段"
