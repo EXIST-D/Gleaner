@@ -15,6 +15,8 @@ _CUE = re.compile(
     r"[？?]|怎么|怎样|如何|为什么|为何|什么|哪些|哪个|哪里|是否|吗|介绍|讲讲|讲一下|说说|聊聊|谈谈|解释|手写|手撕|算法题|区别|原理"
 )
 _DECORATION = re.compile(r"^[^\w（(]+")
+GENERATED_IMAGE_TAGS = ("#牛客AI配图神器#",)
+"""Nowcoder adds this tag when the author let it draw one picture (a mind map) from the post's own text."""
 
 
 def listed_questions(body: str) -> list[str]:
@@ -43,6 +45,13 @@ def body_replaces_images(body: str, image_count: int) -> bool:
     return listed >= MIN_LISTED_QUESTIONS and listed >= image_count
 
 
+def own_image_count(body: str, image_count: int) -> int:
+    """Images that may hold more than the text: a picture generated from the text adds nothing."""
+    generated = 1 if image_count and any(tag in body for tag in GENERATED_IMAGE_TAGS) else 0
+    return image_count - generated
+
+
 def choose_intake(body: str, image_count: int) -> str:
     """ "text" (web-intake of the body) or "images" (ingest images) for one post."""
-    return "text" if image_count == 0 or body_replaces_images(body, image_count) else "images"
+    own = own_image_count(body, image_count)
+    return "text" if own == 0 or body_replaces_images(body, own) else "images"

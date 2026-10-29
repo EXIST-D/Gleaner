@@ -173,7 +173,8 @@ def render_handoff(manifest: dict, pack_dir: Path, config: Config, bank: Path | 
         "1. 每篇帖子只走一个入口，同一道题不能因为两个入口被计两次：`intake` 为 `images` 的用"
         " `ingest images`，为 `text` 的用 `web-intake`。",
         f"2. 正文已经列出题目（至少 {MIN_LISTED_QUESTIONS} 道，且不少于图片张数，见 `body_questions`）的帖子只读正文："
-        "这类帖子的图片通常是同样内容的排版或封面，没有打包，也不需要看。",
+        "这类帖子的图片通常是同样内容的排版或封面，没有打包，也不需要看。"
+        "带 `#牛客AI配图神器#` 的帖子有一张图是牛客按正文生成的思维导图，不算作图片。",
         "3. 看图导入的帖子，`body.txt` 只用来确认公司、岗位、轮次等信息；正文里列出了图片中没有的题时，"
         "再对这篇单独运行 `web-intake`，并且只抽取图片里没有的题。",
         "4. 元数据按 manifest 填写：`platform` 用 `platform_label`，`source_url` 照抄，"
