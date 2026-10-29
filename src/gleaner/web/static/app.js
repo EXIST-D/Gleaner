@@ -83,7 +83,7 @@ async function copy(text) {
 const state = {
   view: null,
   overview: null,
-  crawl: { platform: "xhs", mode: "search", keywords: null, urls: "", pages: 1, count: null, force: false },
+  crawl: { platform: "xhs", mode: "search", keywords: null, urls: "", pages: 1, count: null, force: false, media: false },
   job: null,
   since: 0,
   logLines: [],
@@ -335,6 +335,7 @@ function renderCrawlForm() {
       <div class="field">
         <span class="label">帖子链接</span>
         <textarea id="url-input" placeholder="${esc(URL_HINTS[platform.id] || "每行一个链接")}">${esc(c.urls)}</textarea>
+        ${platform.recordings ? `<label class="check"><input type="checkbox" id="media-input" ${c.media ? "checked" : ""}> 同时下载音视频：面试录音打包时会转成音频交给 Interview Bank 转写（长视频要下载十几分钟）</label>` : ""}
       </div>
     `}
     <div class="plan"><span>本次最多约</span><strong id="plan-count">${plannedNotes()} 篇</strong></div>
@@ -376,10 +377,20 @@ function addKeyword(raw) {
 
 async function startCrawl() {
   const c = state.crawl;
+  const media = c.media && Boolean(platformOf(c.platform).recordings);
   const body = c.mode === "search"
     ? { platform: c.platform, keywords: c.keywords, max_notes: perKeyword(), force: c.force }
-    : { platform: c.platform, urls: urlList(), force: c.force };
-  const engine = platformOf(c.platform).engine;
+    : { platform: c.platform, urls: urlList(), force: c.force, media };
+  await launchCrawl(body);
+}
+
+async function downloadMedia(platform, url) {
+  closeDrawer();
+  if (await launchCrawl({ platform, urls: [url], media: true })) location.hash = "#crawl";
+}
+
+async function launchCrawl(body) {
+  const engine = platformOf(body.platform).engine;
   try {
     const data = await api("/api/crawl", { method: "POST", body });
     state.job = data.job;
@@ -391,8 +402,10 @@ async function startCrawl() {
     renderJob();
     startPolling();
     toast(engine === "nowcoder" ? "已开始抓取" : "已开始抓取，留意弹出的 Chrome 窗口");
+    return true;
   } catch (error) {
     toast(error.message, { error: true });
+    return false;
   }
 }
 
@@ -492,7 +505,8 @@ function renderJob() {
   const finished = job.state !== "running";
   const stateTitle = { running: "进行中", ok: "完成", degraded: "部分完成", failed: "失败", stopped: "已停止" }[job.state];
   const elapsed = ((job.finished_at ? new Date(job.finished_at) : new Date()) - new Date(job.started_at)) / 1000;
-  const what = job.params.targets.length ? `指定 ${job.params.targets.length} 篇帖子` : job.params.keywords.join("、");
+  const targets = job.params.targets.length;
+  const what = job.params.media ? `下载 ${targets} 个视频的音视频` : targets ? `指定 ${targets} 篇帖子` : job.params.keywords.join("、");
   const qrLeft = state.qrDeadline ? Math.max(0, Math.ceil((state.qrDeadline - Date.now()) / 1000)) : null;
 
   const allDone = finished && job.state === "ok";
@@ -514,7 +528,7 @@ function renderJob() {
       ${qrLeft != null ? `<span class="count" id="qr-count">${fmtDuration(qrLeft)}</span>` : ""}</div>` : ""}
     <div class="job-meta">
       <span>已保存帖子 <b>${p.notes}</b></span>
-      ${steps.some((s) => s.name === "download") ? `<span>已下载图片 <b>${p.media}</b></span>` : ""}
+      ${steps.some((s) => s.name === "download") ? `<span>${p.recordings ? "已下载视频" : "已下载图片"} <b>${p.media}</b></span>` : ""}
       <span>用时 <b id="elapsed">${fmtDuration(elapsed)}</b></span>
       <span>最多约 <b>${job.params.planned_notes}</b> 篇</span>
     </div>
@@ -536,7 +550,7 @@ function resultBox(job) {
     const labels = o ? Object.entries(o.labels || {}).map(([k, v]) => `${labelTitle(k)} ${v}`).join("、") : "";
     return `
       <div class="result ok">
-        <h3>${o ? `读到 ${o.records} 条，新增 ${o.new} 篇${o.updated ? `，更新 ${o.updated} 篇` : ""}` : "完成"}</h3>
+        <h3>${o ? `读到 ${o.records} 条，新增 ${o.new} 篇${o.updated ? `，更新 ${o.updated} 篇` : ""}${o.media ? `，下载到音视频 ${o.media} 个` : ""}` : "完成"}</h3>
         <p>${labels ? `新帖初筛：${esc(labels)}` : "没有新帖子需要初筛"}${job.error ? `<br>${esc(job.error)}` : ""}</p>
         <div class="actions"><a class="btn primary small" href="#posts">去看新帖子</a></div>
       </div>`;
@@ -609,10 +623,23 @@ function postCard(p) {
       ${p.packed_in ? `<span class="pill packed-flag">已打包</span>` : `<span class="pick" data-action="toggle-select" data-key="${esc(p.key)}" title="选择">${selected ? "✓" : ""}</span>`}
       <div class="content">
         <div class="title">${esc(p.title)}</div>
-        <div class="badges"><span class="pill ${esc(p.label || "")}">${esc(p.label_title)}</span>${p.kind === "video" ? `<span class="pill">视频</span>` : intake}</div>
+        <div class="badges"><span class="pill ${esc(p.label || "")}">${esc(p.label_title)}</span>${p.kind === "video" ? videoBadge(p) : intake}</div>
         <div class="meta"><span>${esc(p.platform_title)}</span><span>${esc(p.source_date || "日期未知")}</span>${p.likes != null ? `<span>♥ ${p.likes}</span>` : ""}</div>
       </div>
     </article>`;
+}
+
+function videoBadge(p) {
+  if (p.media) return `<span class="pill text">录音 · 已下载</span>`;
+  if (p.recording) return `<span class="pill">面试录音</span>`;
+  return `<span class="pill">视频</span>`;
+}
+
+function videoIntake(post) {
+  if (post.media) return "已下载音视频：打包时会提取音频（单声道、响度均衡），交给 Interview Bank <b>转写录音</b>导入。";
+  if (!post.can_download_media) return "视频帖：打包时只导入正文，视频不打包。";
+  const why = post.recording ? "标题看起来是面试录音。" : "";
+  return `视频帖：现在打包只导入标题和简介。${why}下载音视频后，打包时会转写录音导入。`;
 }
 
 function updateSelectionBar() {
@@ -630,7 +657,7 @@ async function openPost(key) {
     const metrics = Object.entries(post.metrics || {}).map(([k, v]) => `${METRIC_TITLES[k] || k} ${v}`).join(" · ");
     const imageCount = post.images.length;
     const intake = post.kind === "video"
-      ? "视频帖：打包时只导入正文，视频不打包。"
+      ? videoIntake(post)
       : post.intake === "text"
         ? `打包时会<b>读正文</b>导入：正文列出了 ${post.body_questions} 道题${imageCount ? `，${imageCount} 张图片不打包，也不用看` : ""}。`
         : `打包时会<b>看图</b>导入 ${imageCount} 张图片；正文只用来确认公司和轮次。`;
@@ -653,12 +680,14 @@ async function openPost(key) {
         <dt>搜索关键词</dt><dd>${esc(post.keywords.join("、") || "无")}</dd>
         <dt>话题</dt><dd>${esc(post.tags.join("、") || "无")}</dd>
         <dt>互动</dt><dd>${esc(metrics || "无")}</dd>
+        ${post.kind === "video" ? `<dt>音视频</dt><dd>${post.media ? `<code>${esc(post.media_path)}</code>` : "没有下载"}</dd>` : ""}
         <dt>打包</dt><dd>${post.packed_in ? esc(post.packed_in) + (post.changed_after_pack ? "（打包后作者修改过）" : "") : "未打包"}</dd>
         <dt>帖子键</dt><dd><code>${esc(post.key)}</code></dd>
       </dl>
       <div class="drawer-actions">
         <a class="btn" href="${esc(post.open_url)}" target="_blank" rel="noopener noreferrer">打开原帖</a>
         <button class="btn ghost" data-action="copy" data-text="${esc(post.url)}">复制链接</button>
+        ${post.can_download_media && !post.media && !post.packed_in ? `<button class="btn" data-action="download-media" data-platform="${esc(post.platform)}" data-url="${esc(post.url)}">下载音视频</button>` : ""}
         ${post.packed_in ? "" : `<button class="btn ${state.selected.has(post.key) ? "" : "primary"}" data-action="toggle-select" data-key="${esc(post.key)}" data-refresh="drawer">${state.selected.has(post.key) ? "移出待打包" : "加入待打包"}</button>`}
       </div>`, key);
   } catch (error) {
@@ -685,7 +714,8 @@ async function packSelected() {
   try {
     const { pack } = await api("/api/pack", { method: "POST", body: { keys } });
     state.selected.clear();
-    toast(`已生成素材包：${pack.posts} 篇（读正文 ${pack.text_posts}，看图 ${pack.image_posts}）`);
+    const recordings = pack.media_posts ? `，转写录音 ${pack.media_posts}` : "";
+    toast(`已生成素材包：${pack.posts} 篇（读正文 ${pack.text_posts}，看图 ${pack.image_posts}${recordings}）`);
     location.hash = "#packs";
     setTimeout(() => openPack(pack.pack_id), 150);
   } catch (error) {
@@ -704,7 +734,7 @@ async function renderPacks() {
     ${packs.length ? `<div class="grid packs-grid">${packs.map((p) => `
       <div class="card pack-card" data-action="open-pack" data-id="${esc(p.id)}">
         <div class="card-head"><h2>${p.posts} 篇帖子</h2><span class="faint">${esc(fmtTime(p.created_at))}</span></div>
-        <div class="badges"><span class="pill text">读正文 ${p.text_posts}</span><span class="pill">看图 ${p.image_posts}</span></div>
+        <div class="badges"><span class="pill text">读正文 ${p.text_posts}</span><span class="pill">看图 ${p.image_posts}</span>${p.media_posts ? `<span class="pill text">转写录音 ${p.media_posts}</span>` : ""}</div>
         <ul>${p.titles.map((t) => `<li>${esc(t)}</li>`).join("")}${p.posts > p.titles.length ? `<li class="faint">还有 ${p.posts - p.titles.length} 篇</li>` : ""}</ul>
         <div class="id">${esc(p.id)}</div>
       </div>`).join("")}</div>` : `<div class="card empty">还没有素材包。在「帖子」里勾选帖子，然后点「打包所选」。</div>`}`;
@@ -1196,6 +1226,7 @@ document.addEventListener("click", (event) => {
     },
     "remove-keyword": () => { state.crawl.keywords.splice(Number(target.dataset.index), 1); renderCrawlForm(); },
     "start-crawl": startCrawl,
+    "download-media": () => downloadMedia(target.dataset.platform, target.dataset.url),
     "stop-crawl": async () => {
       try {
         await api("/api/crawl/stop", { method: "POST", body: {} });
@@ -1243,6 +1274,8 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "force-input") {
     state.crawl.force = event.target.checked;
     updateStartButton();
+  } else if (event.target.id === "media-input") {
+    state.crawl.media = event.target.checked;
   } else if (event.target.id === "bank-excluded") {
     state.bank.showExcluded = event.target.checked;
     renderBank();

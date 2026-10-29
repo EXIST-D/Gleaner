@@ -4,6 +4,8 @@ from gleaner.adapters.common import ParseReport
 from gleaner.adapters.exports import content_files, copy_export, iter_posts
 from gleaner.adapters.nowcoder import html_to_text, moment_text, post_images
 from tests.support import (
+    BILI_RECORDING,
+    BILI_RECORDING_BVID,
     BILI_VIDEO,
     DOUYIN_IMAGES,
     DOUYIN_VIDEO,
@@ -15,6 +17,7 @@ from tests.support import (
     write_export,
     write_images,
     write_records,
+    write_video,
 )
 
 
@@ -73,6 +76,30 @@ class PlatformAdapterTest(WorkspaceTestCase):
                 "view_count": 15000,
             },
         )
+
+    def test_bilibili_recording_is_found_under_its_bv_folder(self):
+        self.assertIsNone(self.posts()[0]["bili:1150000001"].media)
+        write_records(self.raw, "bili", [BILI_RECORDING], mode="detail")
+        video = write_video(self.raw, "bili", BILI_RECORDING_BVID)
+        posts, _ = self.posts()
+        self.assertEqual(
+            posts["bili:1150000002"].media, "runs/r1/raw/bili/media/" + BILI_RECORDING_BVID + "/video.mp4"
+        )
+        video.write_bytes(b"")
+        self.assertIsNone(self.posts()[0]["bili:1150000002"].media, "an empty file is an aborted download")
+        write_video(self.raw, "dy", DOUYIN_VIDEO["aweme_id"])
+        self.assertIsNone(
+            self.posts()[0]["dy:7300000000000000002"].media, "only Bilibili recordings are kept"
+        )
+
+    def test_copy_export_keeps_bilibili_videos_only(self):
+        write_video(self.raw, "bili", BILI_RECORDING_BVID)
+        write_video(self.raw, "dy", DOUYIN_VIDEO["aweme_id"])
+        target = self.workspace / "runs" / "r2" / "raw"
+        copy_export(self.raw, target)
+        self.assertTrue((target / "bili" / "media" / BILI_RECORDING_BVID / "video.mp4").is_file())
+        self.assertFalse((target / "bili" / "media" / BILI_RECORDING_BVID / "cover.jpg").exists())
+        self.assertFalse((target / "dy" / "media" / DOUYIN_VIDEO["aweme_id"] / "video.mp4").exists())
 
     def test_zhihu_answer_and_article(self):
         posts, _ = self.posts()

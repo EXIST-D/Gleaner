@@ -1,12 +1,29 @@
 import json
+import os
 import shlex
 import unittest
+from pathlib import Path
 
+from gleaner.audio import audio_command, ffmpeg_extractor
 from gleaner.errors import GleanerError
 from gleaner.packer import PACK_SCHEMA, build_pack
 from gleaner.pipeline import import_export
 from gleaner.store import Store
-from tests.support import FAKE_JPEG, INTERVIEW_NOTE, NOW, WorkspaceTestCase, make_config, write_export
+from tests.support import (
+    BILI_RECORDING,
+    BILI_RECORDING_BVID,
+    BILI_VIDEO,
+    FAKE_JPEG,
+    FAKE_VIDEO,
+    INTERVIEW_NOTE,
+    NOW,
+    WorkspaceTestCase,
+    fake_extract,
+    make_config,
+    write_export,
+    write_records,
+    write_video,
+)
 
 
 class PackerTest(WorkspaceTestCase):
@@ -116,6 +133,83 @@ class PackerTest(WorkspaceTestCase):
     def test_limit(self):
         result, _, _ = self.pack(limit=1)
         self.assertEqual(result.posts, 1)
+
+
+class RecordingPackTest(WorkspaceTestCase):
+    def setUp(self):
+        super().setUp()
+        self.config = make_config(
+            self.workspace,
+            media={"ffmpeg": str(self.workspace / "no-such-ffmpeg")},
+            handoff={"asr_python": "asr-python"},
+        )
+        self.source = write_records(self.workspace / "external", "bili", [BILI_RECORDING, BILI_VIDEO])
+        write_video(self.source, "bili", BILI_RECORDING_BVID)
+        with Store.open(self.workspace, create=True) as store:
+            import_export(store, self.config, self.source, now=NOW)
+
+    def test_recording_is_packed_as_normalized_audio(self):
+        with Store.open(self.workspace) as store:
+            result = build_pack(store, self.config, now=NOW, keys=["bili:1150000002"], extract=fake_extract)
+        self.assertEqual((result.posts, result.media_posts, result.text_posts), (1, 1, 0))
+        manifest = json.loads((result.path / "manifest.json").read_text(encoding="utf-8"))
+        (entry,) = manifest["posts"]
+        self.assertEqual((entry["intake"], entry["notes"]), ("media", ["audio-normalized"]))
+        self.assertEqual(entry["media"], "posts/bili-1150000002/audio.flac")
+        self.assertEqual((result.path / entry["media"]).read_bytes(), b"fLaC" + FAKE_VIDEO)
+        self.assertEqual(entry["source_url"], "https://www.bilibili.com/video/av1150000002")
+
+        handoff = (result.path / "HANDOFF.md").read_text(encoding="utf-8")
+        self.assertIn("转写录音导入 1 篇", handoff)
+        self.assertIn("在 `correction` 里写明改了什么", handoff)
+        commands = [
+            shlex.split(line) for line in handoff.splitlines() if "ibank.py" in line and "init" not in line
+        ]
+        by_name = {parts[3]: parts for parts in commands}
+        self.assertEqual(set(by_name), {"media", "media-transcribe", "media-task"})
+        self.assertTrue(all(parts[0] == "asr-python" for parts in commands))
+        self.assertIn(str(result.path / entry["media"]), by_name["media"])
+        transcribe = by_name["media-transcribe"]
+        self.assertEqual(transcribe[transcribe.index("--model") + 1], "large-v3-turbo")
+        self.assertIn("--download-model", transcribe)
+
+    def test_missing_ffmpeg_stops_before_anything_is_packed(self):
+        with Store.open(self.workspace) as store:
+            with self.assertRaisesRegex(GleanerError, "找不到 ffmpeg"):
+                build_pack(store, self.config, now=NOW, keys=["bili:1150000002"])
+            self.assertIsNone(store.get("bili:1150000002").packed_in)
+            result = build_pack(store, self.config, now=NOW, keys=["bili:1150000001"])
+        self.assertEqual((result.text_posts, result.media_posts), (1, 0))
+        self.assertEqual(list((self.workspace / "packs").iterdir()), [result.path])
+
+    def test_a_deleted_video_falls_back_to_the_title(self):
+        with Store.open(self.workspace) as store:
+            (self.workspace / store.get("bili:1150000002").post.media).unlink()
+            result = build_pack(store, self.config, now=NOW, keys=["bili:1150000002"])
+        manifest = json.loads((result.path / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            (manifest["posts"][0]["intake"], manifest["posts"][0]["notes"]), ("text", ["media-missing"])
+        )
+
+
+class AudioTest(WorkspaceTestCase):
+    def test_audio_is_mono_16k_with_loudness_normalized(self):
+        command = audio_command("ffmpeg", Path("in.mp4"), Path("out.flac"))
+        pairs = dict(zip(command[1::2], command[2::2], strict=False))
+        self.assertEqual((pairs["-ac"], pairs["-ar"], pairs["-af"]), ("1", "16000", "dynaudnorm=f=150:g=15"))
+        self.assertEqual(command[-1], "out.flac")
+
+    @unittest.skipIf(os.name == "nt", "the stand-in ffmpeg is a shell script")
+    def test_extractor_runs_ffmpeg_and_checks_its_output(self):
+        ffmpeg = self.workspace / "ffmpeg"
+        ffmpeg.write_text('#!/bin/sh\nfor last; do :; done\nprintf audio > "$last"\n', encoding="utf-8")
+        ffmpeg.chmod(0o755)
+        target = self.workspace / "out.flac"
+        ffmpeg_extractor(str(ffmpeg))(self.workspace / "in.mp4", target)
+        self.assertEqual(target.read_bytes(), b"audio")
+        ffmpeg.write_text("#!/bin/sh\necho 'Invalid data found' >&2\nexit 1\n", encoding="utf-8")
+        with self.assertRaisesRegex(GleanerError, "Invalid data found"):
+            ffmpeg_extractor(str(ffmpeg))(self.workspace / "in.mp4", self.workspace / "other.flac")
 
 
 if __name__ == "__main__":

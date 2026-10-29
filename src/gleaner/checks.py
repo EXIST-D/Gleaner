@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 
+from gleaner.audio import find_ffmpeg
 from gleaner.config import Config
 from gleaner.sources.mediacrawler import MediaCrawlerDriver
 
@@ -22,6 +23,8 @@ class Check:
 
 def environment_checks(config: Config) -> list[Check]:
     problems = MediaCrawlerDriver(config.mediacrawler).problems()
+    ffmpeg = find_ffmpeg(config.media.ffmpeg)
+    asr_python = config.handoff.transcribe_python
     ibank = config.handoff.ibank
     bank = config.handoff.bank
     bank_ok = bool(bank and (bank / "manifest.json").is_file())
@@ -47,5 +50,17 @@ def environment_checks(config: Config) -> list[Check]:
         Check("bank", "采集题库", bank_ok, bank_detail),
         Check(
             "python", "导入用 Python", shutil.which(config.handoff.python) is not None, config.handoff.python
+        ),
+        Check(
+            "ffmpeg",
+            "ffmpeg（下载和打包 B 站面试录音需要）",
+            ffmpeg is not None,
+            ffmpeg or f"找不到 {config.media.ffmpeg}；在 [media] ffmpeg 写上路径",
+        ),
+        Check(
+            "asr_python",
+            "转写用 Python（需要装 faster-whisper）",
+            shutil.which(asr_python) is not None,
+            asr_python,
         ),
     ]

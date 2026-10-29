@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gleaner.adapters import bilibili, douyin, nowcoder, xhs, zhihu
-from gleaner.adapters.common import IMAGE_FILE, ParseReport, read_records
+from gleaner.adapters.common import IMAGE_FILE, VIDEO_FILE, ParseReport, read_records
 from gleaner.models import Post
 
 
@@ -23,12 +23,14 @@ class Export:
     data_dir: str
     media_dir: str | None
     to_post: Callable[..., Post | None]
+    videos: bool = False
+    """Whether downloaded videos are worth keeping: only Bilibili recordings get transcribed."""
 
 
 EXPORTS = {
     "xhs": Export("xhs", "xhs", "xhs", xhs.to_post),
     "dy": Export("dy", "douyin", "dy", douyin.to_post),
-    "bili": Export("bili", "bili", "bili", bilibili.to_post),
+    "bili": Export("bili", "bili", "bili", bilibili.to_post, videos=True),
     "zhihu": Export("zhihu", "zhihu", None, zhihu.to_post),
     "nowcoder": Export("nowcoder", "nowcoder", "nowcoder", nowcoder.to_post),
 }
@@ -58,7 +60,9 @@ def iter_posts(raw_dir: Path, workspace: Path, report: ParseReport) -> Iterator[
 
 
 def copy_export(source: Path, raw_dir: Path) -> list[str]:
-    """Copy records and post images of an existing output directory into a run; returns the platforms found.
+    """Copy records, post images and Bilibili videos of an existing output directory into a run.
+
+    Returns the platforms found.
 
     `source` is either the whole data directory (with `xhs/`, `douyin/` … inside) or one platform's directory.
     """
@@ -79,7 +83,7 @@ def copy_export(source: Path, raw_dir: Path) -> list[str]:
             continue
         for post_dir in sorted((base / export.media_dir / "media").glob("*")):
             for image in sorted(post_dir.glob("*")):
-                if IMAGE_FILE.match(image.name):
+                if IMAGE_FILE.match(image.name) or (export.videos and image.name == VIDEO_FILE):
                     destination = raw_dir / export.media_dir / "media" / post_dir.name / image.name
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(image, destination)

@@ -15,13 +15,14 @@ from gleaner.errors import GleanerError
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     check_interval,
+    check_recordings,
     crawl,
     default_max_notes,
     fetcher_for,
     planned_notes,
 )
 from gleaner.sources.base import Fetcher, FetchResult
-from gleaner.sources.mediacrawler import Runner, make_runner
+from gleaner.sources.mediacrawler import Runner, make_runner, tool_dirs
 from gleaner.store import Store
 from gleaner.timeutil import iso, new_id, utc_now
 from gleaner.web.progress import Progress
@@ -39,6 +40,7 @@ class FetcherFactory(Protocol):
         runner: Runner,
         on_line: Callable[[str], None],
         should_stop: Callable[[], bool],
+        media: bool,
     ) -> Fetcher: ...
 
 
@@ -49,8 +51,11 @@ def default_fetcher(
     runner: Runner,
     on_line: Callable[[str], None],
     should_stop: Callable[[], bool],
+    media: bool,
 ) -> Fetcher:
-    return fetcher_for(config, platform, runner=runner, on_line=on_line, should_stop=should_stop, echo=False)
+    return fetcher_for(
+        config, platform, runner=runner, on_line=on_line, should_stop=should_stop, echo=False, media=media
+    )
 
 
 class CrawlJob:
@@ -62,7 +67,9 @@ class CrawlJob:
         self.state = "running"
         self.outcome: dict | None = None
         self.error: str | None = None
-        self.progress = Progress(params.get("platform", "xhs"), download=download)
+        self.progress = Progress(
+            params.get("platform", "xhs"), download=download, recordings=bool(params.get("media"))
+        )
         self._lines: list[str] = []
         self._dropped = 0
         self._process: subprocess.Popen | None = None
@@ -156,7 +163,9 @@ class CrawlJobs:
         targets: Sequence[str],
         max_notes: int | None,
         force: bool,
+        media: bool = False,
     ) -> CrawlJob:
+        """media downloads the videos of the given links too (Bilibili recordings)."""
         if platform not in CRAWL_PLATFORMS:
             raise GleanerError(f"不支持抓取 {platform}")
         config = load_config(self.workspace)
@@ -164,6 +173,10 @@ class CrawlJobs:
         targets = [value.strip() for value in targets if value.strip()]
         if not targets and not keywords:
             raise GleanerError("请至少填写一个关键词，或者粘贴要抓取的帖子链接")
+        if media:
+            check_recordings(platform)
+            if not targets:
+                raise GleanerError("下载音视频要粘贴视频链接")
         if max_notes is not None and not 1 <= max_notes <= MAX_NOTES_CAP:
             raise GleanerError(f"每个关键词的篇数必须在 1 到 {MAX_NOTES_CAP} 之间")
         now = self.clock()
@@ -181,12 +194,13 @@ class CrawlJobs:
                     config, platform=platform, keywords=keywords, targets=targets, max_notes=max_notes
                 ),
                 "force": force,
+                "media": media,
             }
             job = CrawlJob(new_id("job", now), params, iso(now), download=config.nowcoder.download_images)
             self.current = job
             self._thread = threading.Thread(
                 target=self._run,
-                args=(job, config, platform, keywords, targets, max_notes, force),
+                args=(job, config, platform, keywords, targets, max_notes, force, media),
                 daemon=True,
             )
             self._thread.start()
@@ -209,11 +223,18 @@ class CrawlJobs:
         targets: list[str],
         max_notes: int | None,
         force: bool,
+        media: bool,
     ) -> None:
-        runner = make_runner(on_line=job.add_line, on_start=job.attach)
+        path_dirs = tool_dirs(config.media.ffmpeg) if media else ()
+        runner = make_runner(on_line=job.add_line, on_start=job.attach, path_dirs=path_dirs)
         try:
             inner = self.fetcher_factory(
-                config, platform, runner=runner, on_line=job.add_line, should_stop=job.stop_requested
+                config,
+                platform,
+                runner=runner,
+                on_line=job.add_line,
+                should_stop=job.stop_requested,
+                media=media,
             )
             fetcher = _Finishing(inner, job)
             with Store.open(self.workspace) as store:
@@ -227,6 +248,7 @@ class CrawlJobs:
                     max_notes=max_notes,
                     force=force,
                     now=self.clock(),
+                    media=media,
                 )
             job.finish(state=outcome.status, outcome=outcome.as_dict(), error=outcome.message or None)
         except GleanerError as exc:

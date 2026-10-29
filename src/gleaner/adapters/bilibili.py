@@ -1,16 +1,17 @@
 """MediaCrawler's Bilibili videos (`store/bilibili/__init__.py: update_bilibili_video`).
 
-Only the title and description are text; MediaCrawler cuts both at 500 characters.
+Only the title and description are text; MediaCrawler cuts both at 500 characters. With `--get_media yes`
+the video lands in `media/<BV ID>/video.mp4`, while the record itself only carries the av number.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from gleaner.adapters.common import hashtags, metrics
+from gleaner.adapters.common import hashtags, local_video, metrics
 from gleaner.models import Post
 from gleaner.timeutil import from_epoch
-from gleaner.urls import bilibili_url
+from gleaner.urls import bilibili_bvid, bilibili_url
 
 _METRICS = {
     "liked_count": "liked_count",
@@ -25,6 +26,7 @@ def to_post(record: dict, *, media: Path, workspace: Path) -> Post | None:
     aid = str(record.get("video_id") or "").strip()
     if not aid:
         return None
+    folders = [media / bilibili_bvid(aid), media / aid] if aid.isdigit() else [media / aid]
     title = str(record.get("title") or "").strip()
     body = str(record.get("desc") or "").strip()
     if body == "-":
@@ -43,4 +45,5 @@ def to_post(record: dict, *, media: Path, workspace: Path) -> Post | None:
         keywords=[keyword] if keyword else [],
         metrics=metrics(record, _METRICS),
         author_hash=str(record.get("creator_hash") or ""),
+        media=local_video(folders, workspace),
     )

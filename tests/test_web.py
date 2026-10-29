@@ -14,7 +14,16 @@ from gleaner.sources.base import FetchResult
 from gleaner.store import Store
 from gleaner.web.jobs import CrawlJobs
 from gleaner.web.server import TOKEN_PLACEHOLDER, WebApp, WebServer
-from tests.support import NOW, NOWCODER_DISCUSS, WorkspaceTestCase, write_export, write_records
+from tests.support import (
+    BILI_RECORDING,
+    BILI_RECORDING_BVID,
+    NOW,
+    NOWCODER_DISCUSS,
+    WorkspaceTestCase,
+    write_export,
+    write_records,
+    write_video,
+)
 
 FAKE_MEDIACRAWLER = r"""
 import json, sys, time
@@ -157,6 +166,24 @@ class WebAppTest(WorkspaceTestCase):
         self.assertEqual(self.get("/media/gleaner.db")[0].status, 404)
         self.assertEqual(self.get("/api/post?key=xhs:none")[0].status, 400)
 
+    def test_recording_flags_and_media_intake(self):
+        source = write_records(self.workspace / "export3", "bili", [BILI_RECORDING])
+        with Store.open(self.ws) as store:
+            import_export(store, load_config(self.ws), source, now=NOW)
+        post = self.get("/api/post?key=bili:1150000002")[1]["post"]
+        self.assertEqual(
+            (post["recording"], post["media"], post["can_download_media"], post["intake"]),
+            (True, False, True, "text"),
+        )
+        self.assertFalse(self.get("/api/post?key=xhs:dd04")[1]["post"]["can_download_media"])
+        write_video(source, "bili", BILI_RECORDING_BVID)
+        with Store.open(self.ws) as store:
+            import_export(store, load_config(self.ws), source, now=NOW)
+        post = self.get("/api/post?key=bili:1150000002")[1]["post"]
+        self.assertEqual((post["media"], post["intake"]), (True, "media"))
+        self.assertTrue(post["media_path"].endswith("/video.mp4"))
+        self.assertTrue({p["id"]: p for p in self.get("/api/overview")[1]["platforms"]}["bili"]["recordings"])
+
     def test_writes_need_the_page_token(self):
         response, data = self.post("/api/label", {"key": "xhs:aa01", "label": "promo"}, token="wrong")
         self.assertEqual(response.status, 403)
@@ -267,7 +294,7 @@ class CrawlJobTest(WorkspaceTestCase):
                 seen["stop"] = self.should_stop()
                 return FetchResult("ok", output_dir)
 
-        def factory(config, platform, *, runner, on_line, should_stop):
+        def factory(config, platform, *, runner, on_line, should_stop, media):
             seen["platform"] = platform
             return FakeFetcher(on_line, should_stop)
 
@@ -283,6 +310,48 @@ class CrawlJobTest(WorkspaceTestCase):
         with Store.open(self.ws) as store:
             self.assertIsNotNone(store.get("nowcoder:800000001"))
             self.assertEqual(store.runs()[0].source, "nowcoder")
+
+    def test_recording_download_passes_media_and_counts_merged_videos(self):
+        seen = {}
+
+        class FakeDownloader:
+            def __init__(self, on_line):
+                self.on_line = on_line
+
+            def problems(self):
+                return []
+
+            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+                seen["targets"] = list(targets)
+                write_records(output_dir, "bili", [BILI_RECORDING], mode="detail")
+                self.on_line("[store.bilibili.update_bilibili_video] bilibili video id:1150000002")
+                for name in ("cover.jpg", "video.m4s", "audio.m4s"):
+                    self.on_line(f"[download] 下载完成: {name} (10 bytes)")
+                write_video(output_dir, "bili", BILI_RECORDING_BVID)
+                self.on_line("[download] DASH 合流完成: video.mp4 (20 bytes)")
+                return FetchResult("ok", output_dir)
+
+        def factory(config, platform, *, runner, on_line, should_stop, media):
+            seen["media"] = media
+            return FakeDownloader(on_line)
+
+        jobs = CrawlJobs(self.ws, fetcher_factory=factory)
+        with self.assertRaisesRegex(GleanerError, "B站"):
+            jobs.start(platform="xhs", keywords=[], targets=["aa01"], max_notes=None, force=False, media=True)
+        with self.assertRaisesRegex(GleanerError, "视频链接"):
+            jobs.start(platform="bili", keywords=["a"], targets=[], max_notes=None, force=False, media=True)
+        url = "https://www.bilibili.com/video/av1150000002"
+        job = jobs.start(platform="bili", keywords=[], targets=[url], max_notes=None, force=False, media=True)
+        jobs.wait(20)
+        snapshot = job.snapshot()
+        self.assertEqual(snapshot["state"], "ok", snapshot)
+        self.assertEqual(seen, {"media": True, "targets": [url]})
+        progress = snapshot["progress"]
+        self.assertEqual((progress["recordings"], progress["media"]), (True, 1))
+        self.assertEqual([s["title"] for s in progress["steps"]][2:4], ["读取视频", "下载音视频"])
+        self.assertEqual(snapshot["outcome"]["media"], 1)
+        with Store.open(self.ws) as store:
+            self.assertTrue(store.get("bili:1150000002").post.media)
 
 
 class ServerTest(WorkspaceTestCase):

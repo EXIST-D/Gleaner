@@ -80,6 +80,40 @@ class StoreTest(WorkspaceTestCase):
             self.assertEqual(store.upsert_post(sample(), run_id="r2", now=T1), "updated")
             self.assertEqual(len(store.get("xhs:aa01").post.images), 1)
 
+    def test_recording_arriving_later_is_kept_without_relabeling(self):
+        video = sample(platform="bili", post_id="1", kind="video", images=[], remote_image_count=0)
+        with self.open() as store:
+            self.run_ids(store, "r1", "r2", "r3")
+            store.upsert_post(video, run_id="r1", now=T0)
+            store.set_label("bili:1", "candidate", source="rule", reasons=["recording:录音"], now=T0)
+            media = "runs/r2/raw/bili/media/BV1/video.mp4"
+            self.assertEqual(store.upsert_post(replace(video, media=media), run_id="r2", now=T1), "updated")
+            self.assertEqual(store.upsert_post(video, run_id="r3", now=T1), "unchanged")
+            record = store.get("bili:1")
+        self.assertEqual(record.post.media, media)
+        self.assertEqual((record.label, record.label_reasons), ("candidate", ["recording:录音"]))
+
+    def test_version_1_workspace_gains_the_media_column(self):
+        from gleaner import store as store_module
+
+        connection = sqlite3.connect(self.workspace / DB_NAME)
+        with connection:
+            connection.executescript(store_module._SCHEMA.replace("    media TEXT,\n", ""))
+            connection.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")
+            connection.execute(
+                "INSERT INTO runs (id, source, mode, params, output_dir, started_at, status)"
+                " VALUES ('r1', 's', 'search', '{}', 'x', ?, 'ok')",
+                (T0,),
+            )
+        connection.close()
+        with Store.open(self.workspace) as store:
+            store.upsert_post(sample(media="runs/r1/raw/x.mp4"), run_id="r1", now=T0)
+            self.assertEqual(store.get("xhs:aa01").post.media, "runs/r1/raw/x.mp4")
+        connection = sqlite3.connect(self.workspace / DB_NAME)
+        (version,) = connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        connection.close()
+        self.assertEqual(version, str(SCHEMA_VERSION))
+
     def test_filters(self):
         with self.open() as store:
             self.run_ids(store, "r1")

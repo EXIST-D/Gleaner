@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
 from gleaner.config import Config, parse_config
+from gleaner.urls import bilibili_bvid
 
 FAKE_JPEG = b"\xff\xd8\xff\xe0" + b"gleaner-test-image" + b"\xff\xd9"
 NOW = datetime(2026, 10, 27, 8, 0, tzinfo=UTC)
@@ -122,6 +124,16 @@ BILI_VIDEO = {
     "video_url": "https://www.bilibili.com/video/av1150000001",
     "source_keyword": "Go 面经",
 }
+BILI_RECORDING = {
+    "video_id": "1150000002",
+    "title": "虚构公司 Java 后端一面录音（全程）",
+    "desc": "远程面试，声音有点小",
+    "create_time": 1792627200,
+    "video_url": "https://www.bilibili.com/video/av1150000002",
+    "source_keyword": "Java 面经",
+}
+BILI_RECORDING_BVID = bilibili_bvid("1150000002")
+FAKE_VIDEO = b"not-a-real-video"
 ZHIHU_ANSWER = {
     "content_id": "300000001",
     "content_type": "answer",
@@ -189,6 +201,32 @@ def write_images(raw_dir: Path, media_dir: str, post_id: str, count: int) -> Non
     media.mkdir(parents=True, exist_ok=True)
     for index in range(1, count + 1):
         (media / f"{index:03d}.jpg").write_bytes(FAKE_JPEG + bytes([index]))
+
+
+def write_video(raw_dir: Path, media_dir: str, folder: str) -> Path:
+    """A downloaded video the way MediaCrawler stores it (Bilibili folders are named by BV ID)."""
+    media = raw_dir / media_dir / "media" / folder
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "cover.jpg").write_bytes(FAKE_JPEG)
+    (media / "video.mp4").write_bytes(FAKE_VIDEO)
+    return media / "video.mp4"
+
+
+def fake_tool(directory: Path, name: str) -> Path:
+    """An executable that does nothing, so shutil.which finds it on every OS."""
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        path = directory / f"{name}.bat"
+        path.write_text("@echo off\r\n", encoding="utf-8")
+    else:
+        path = directory / name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return path
+
+
+def fake_extract(source: Path, target: Path) -> None:
+    target.write_bytes(b"fLaC" + source.read_bytes())
 
 
 def make_config(workspace: Path, **overrides) -> Config:

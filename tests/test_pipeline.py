@@ -8,6 +8,7 @@ from gleaner.pipeline import (
     fetcher_for,
     import_export,
     planned_notes,
+    recordings_to_download,
     screen,
     seconds_until_next_crawl,
     source_name,
@@ -17,6 +18,8 @@ from gleaner.sources.mediacrawler import MediaCrawlerDriver
 from gleaner.sources.nowcoder import NowcoderFetcher
 from gleaner.store import Store
 from tests.support import (
+    BILI_RECORDING,
+    BILI_RECORDING_BVID,
     BILI_VIDEO,
     NOW,
     NOWCODER_DISCUSS,
@@ -25,6 +28,7 @@ from tests.support import (
     make_config,
     write_export,
     write_records,
+    write_video,
 )
 
 
@@ -178,6 +182,85 @@ class PipelineTest(WorkspaceTestCase):
         self.assertIsInstance(driver, MediaCrawlerDriver)
         self.assertEqual(driver.platform, "zhihu")
         self.assertEqual(source_name("dy"), "mediacrawler-dy")
+
+    def test_recordings_flagged_by_screening_are_downloaded_on_request(self):
+        found = FakeDriver(write=lambda raw: write_records(raw, "bili", [BILI_VIDEO, BILI_RECORDING]))
+
+        def with_video(raw):
+            write_records(raw, "bili", [BILI_RECORDING], mode="detail")
+            write_video(raw, "bili", BILI_RECORDING_BVID)
+
+        later = NOW + timedelta(minutes=10)
+        with Store.open(self.workspace, create=True) as store:
+            self.crawl(store, found, platform="bili")
+            (wanted,) = recordings_to_download(store)
+            self.assertEqual(wanted.post.key, "bili:1150000002")
+            downloader = FakeDriver(write=with_video)
+            outcome = crawl(
+                store,
+                self.config,
+                downloader,
+                platform="bili",
+                keywords=[],
+                targets=[wanted.post.url],
+                max_notes=None,
+                force=False,
+                now=later,
+                media=True,
+            )
+            self.assertEqual((outcome.status, outcome.summary.media, outcome.summary.updated), ("ok", 1, 1))
+            self.assertEqual(downloader.calls[0]["mode"], "detail")
+            self.assertTrue(store.get("bili:1150000002").post.media.endswith("/video.mp4"))
+            self.assertTrue(store.runs()[0].params["media"])
+            self.assertEqual(recordings_to_download(store), [])
+            self.assertEqual(
+                recordings_to_download(store, ["bili:1150000001"])[0].post.key, "bili:1150000001"
+            )
+            with self.assertRaisesRegex(GleanerError, "找不到"):
+                recordings_to_download(store, ["bili:404"])
+
+    def test_a_recording_that_did_not_download_is_degraded(self):
+        driver = FakeDriver(write=lambda raw: write_records(raw, "bili", [BILI_RECORDING], mode="detail"))
+        with Store.open(self.workspace, create=True) as store:
+            outcome = crawl(
+                store,
+                self.config,
+                driver,
+                platform="bili",
+                keywords=[],
+                targets=["1150000002"],
+                max_notes=None,
+                force=False,
+                now=NOW,
+                media=True,
+            )
+            self.assertEqual(outcome.status, "degraded")
+            self.assertIn("只下载到 0 个", outcome.message)
+            with self.assertRaisesRegex(GleanerError, "视频链接"):
+                crawl(
+                    store,
+                    self.config,
+                    driver,
+                    platform="bili",
+                    keywords=["a"],
+                    targets=[],
+                    max_notes=None,
+                    force=True,
+                    now=NOW,
+                    media=True,
+                )
+
+    def test_only_bilibili_downloads_recordings(self):
+        driver = fetcher_for(self.config, "bili", runner=lambda *args: 0, media=True)
+        self.assertIs(driver.media, self.config.media)
+        self.assertIsNone(fetcher_for(self.config, "bili", runner=lambda *args: 0).media)
+        for platform in ("xhs", "nowcoder"):
+            with self.subTest(platform), self.assertRaisesRegex(GleanerError, "B站"):
+                fetcher_for(self.config, platform, runner=lambda *args: 0, media=True)
+        with Store.open(self.workspace, create=True) as store:
+            self.crawl(store, FakeDriver())
+            with self.assertRaisesRegex(GleanerError, "不支持"):
+                recordings_to_download(store, ["xhs:aa01"])
 
     def test_import_of_mixed_export_records_its_platforms(self):
         source = write_records(write_export(self.workspace / "external"), "bili", [BILI_VIDEO])

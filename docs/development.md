@@ -21,7 +21,7 @@ git config user.name EXIST-D
 git config user.email 72126689+EXIST-D@users.noreply.github.com
 ```
 
-然后跑一遍完整检查（见第 4 节），163 个测试全过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
+然后跑一遍完整检查（见第 4 节），全部测试通过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
 Interview Bank 或网络。
 
 Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/bin/` 换掉即可；提交钩子由 Git for Windows 自带的 sh 执行。
@@ -46,6 +46,14 @@ Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/b
   ```
   在 `workspace/gleaner.toml` 的 `[handoff]` 里填 `ibank = "<Interview-bank>/skills/interview-bank/scripts/ibank.py"`，
   `python` 填一个 3.10+ 的解释器。
+- **ffmpeg 和 faster-whisper**：只有转写 B 站面试录音时需要。没有系统的 ffmpeg 时，可以和 faster-whisper 装进同一个虚拟环境：
+  ```bash
+  uv venv --python 3.11 workspace/asr-venv
+  uv pip install --python workspace/asr-venv/bin/python faster-whisper imageio-ffmpeg
+  mkdir -p workspace/bin && ln -s "$(workspace/asr-venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" workspace/bin/ffmpeg
+  ```
+  然后在 `workspace/gleaner.toml` 里写 `[media] ffmpeg = "bin/ffmpeg"` 和 `[handoff] asr_python = "asr-venv/bin/python"`。
+  链接必须叫 `ffmpeg`：MediaCrawler 按这个名字在 PATH 里找它。
 
 ## 3. 工作区和数据
 
@@ -123,7 +131,12 @@ git push
 已经能用：
 
 - 小红书、牛客、知乎（真实抓取导入过），抖音、B 站（真实试抓过，字段和进度识别都对）的抓取、去重、初筛、打包，
-  网页控制台的全部页面。B 站的题在视频声音里，目前没有可导入的文字。
+  网页控制台的全部页面。
+- B 站面试录音：初筛标出录音 → `gleaner media` 下载音视频 → 打包成 `audio.flac` → Interview Bank 转写导入。
+  2026-10-29 先手工试了一遍（两段共约 1.5 小时的录音导入 33 道题），再做进 Gleaner；
+  做进来之后用真实视频核对过音频提取（35 分钟 2 秒，约 44 MB）和 HANDOFF 里的转写命令，
+  还没用 `gleaner media` 真实下载过一次。工作区里标成录音的 4 个视频中有两个已经手工导入过（帖子键记在本机的
+  `开发进度.md`），不要再下载打包，否则题会重复计数。
 - 快手试抓过两个关键词，40 个视频全是无关内容或引流，已经不再支持。
 - 抖音（要先给 MediaCrawler 打 `docs/mediacrawler.md` 里的补丁）：2026-10-29 试抓“后端 面经”一页 12 篇，
   字段、图片和初筛都对，其中 4 篇图集和正文面经已导入采集题库。有一篇的最后一张图是面试陪跑广告，
@@ -133,6 +146,7 @@ git push
 
 1. 采集题库里大部分题还没有参考答案（`ibank.py stats` 的 `answer_status.missing`；目前只有智能体领域补过）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
-2. 视频帖的口述内容：B 站、抖音的面试复盘视频现在只导入标题和简介，可以接 Interview Bank 的 `ingest media` 本地转写。
+2. 用 `gleaner media` 真实下载剩下两个录音，走一遍打包和转写导入。
+   另有几个 B 站视频从标题看不出是不是录音，可以打开看看，是的话用 `gleaner media <帖子键>` 下载。
 3. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。
 4. 采集题库与个人题库的覆盖对照。

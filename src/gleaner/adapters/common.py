@@ -10,6 +10,7 @@ from pathlib import Path
 
 IMAGE_FILE = re.compile(r"^\d{3}\.(?:jpe?g|png|webp|gif)$", re.IGNORECASE)
 """Post images are numbered 001.jpg …; covers and videos are named cover.* and video.*."""
+VIDEO_FILE = "video.mp4"
 _HASHTAG = re.compile(r"#([^\s#]{1,30})")
 
 
@@ -51,6 +52,15 @@ def local_images(directory: Path, workspace: Path) -> list[str]:
         return []
     files = sorted(path for path in directory.iterdir() if IMAGE_FILE.match(path.name))
     return [path.resolve().relative_to(workspace.resolve()).as_posix() for path in files]
+
+
+def local_video(directories: list[Path], workspace: Path) -> str | None:
+    """The first downloaded `video.mp4` among a post's possible media directories."""
+    for directory in directories:
+        path = directory / VIDEO_FILE
+        if path.is_file() and path.stat().st_size:
+            return path.resolve().relative_to(workspace.resolve()).as_posix()
+    return None
 
 
 def parse_count(value: object) -> int | None:

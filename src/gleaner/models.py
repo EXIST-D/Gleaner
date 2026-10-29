@@ -52,6 +52,8 @@ class Post:
     remote_image_count: int = 0
     metrics: dict[str, int] = field(default_factory=dict)
     author_hash: str = ""
+    media: str | None = None
+    """A downloaded recording (Bilibili video), relative to the workspace; packed as audio for transcription."""
 
     @property
     def key(self) -> str:

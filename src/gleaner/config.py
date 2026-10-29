@@ -43,6 +43,16 @@ class ScreeningConfig:
     promo_terms: tuple[str, ...] = ()
     strong_promo_terms: tuple[str, ...] = ()
     collection_terms: tuple[str, ...] = ()
+    recording_terms: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MediaConfig:
+    """Bilibili recordings: downloading the video and turning it into audio for transcription."""
+
+    ffmpeg: str = "ffmpeg"
+    """Command name or path; MediaCrawler needs it on PATH to merge Bilibili's separate audio and video."""
+    download_timeout_seconds: int = 3600
 
 
 @dataclass(frozen=True)
@@ -50,6 +60,13 @@ class HandoffConfig:
     bank: Path | None = None
     ibank: Path | None = None
     python: str = "python3"
+    asr_python: str = ""
+    """Python with faster-whisper installed, for `ibank media-transcribe`; empty means `python`."""
+    asr_model: str = "large-v3-turbo"
+
+    @property
+    def transcribe_python(self) -> str:
+        return self.asr_python or self.python
 
 
 @dataclass(frozen=True)
@@ -59,6 +76,7 @@ class Config:
     mediacrawler: MediaCrawlerConfig = field(default_factory=MediaCrawlerConfig)
     nowcoder: NowcoderConfig = field(default_factory=NowcoderConfig)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
+    media: MediaConfig = field(default_factory=MediaConfig)
     handoff: HandoffConfig = field(default_factory=HandoffConfig)
 
 
@@ -88,6 +106,7 @@ def parse_config(data: dict, workspace: Path) -> Config:
     crawler = _table(data, "mediacrawler")
     nowcoder = _table(data, "nowcoder")
     screening = _table(data, "screening")
+    media = _table(data, "media")
     handoff = _table(data, "handoff")
 
     max_notes = _int(crawler, "max_notes", 20, "mediacrawler.max_notes")
@@ -142,10 +161,18 @@ def parse_config(data: dict, workspace: Path) -> Config:
                 for name in ScreeningConfig.__dataclass_fields__
             }
         ),
+        media=MediaConfig(
+            ffmpeg=_command(media.get("ffmpeg"), workspace) or "ffmpeg",
+            download_timeout_seconds=max(
+                300, _int(media, "download_timeout_seconds", 3600, "media.download_timeout_seconds")
+            ),
+        ),
         handoff=HandoffConfig(
             bank=_path(handoff.get("bank"), workspace),
             ibank=_path(handoff.get("ibank"), workspace),
             python=str(handoff.get("python") or "python3"),
+            asr_python=_command(handoff.get("asr_python"), workspace),
+            asr_model=str(handoff.get("asr_model") or "large-v3-turbo"),
         ),
     )
 
@@ -181,6 +208,18 @@ def _strings(table: dict, key: str, default: list[str], label: str) -> list[str]
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise GleanerError(f"{label} 必须是字符串列表")
     return value
+
+
+def _command(value: object, workspace: Path) -> str:
+    """A bare command name stays as is (looked up on PATH); anything with a separator is a path.
+
+    Symlinks are kept: a venv's python and an ffmpeg link only work under their own names.
+    """
+    text = str(value or "").strip()
+    if not text or ("/" not in text and "\\" not in text):
+        return text
+    path = Path(text).expanduser()
+    return os.path.normpath(path if path.is_absolute() else workspace / path)
 
 
 def _path(value: object, workspace: Path) -> Path | None:

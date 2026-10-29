@@ -7,16 +7,17 @@
 | `cli.py` | 命令行入口；预期内的错误打印一行中文提示，`--json` 输出机器可读结果 |
 | `config.py` | 读取并校验 `gleaner.toml`；模板在 `templates/gleaner.toml` |
 | `sources/base.py` | `Fetcher` 接口（`problems()`、`run()`）与 `FetchResult` |
-| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体）、运行子进程、记录日志、把失败归为“降级” |
+| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体、B 站 av 链接换成 BV 链接）、运行子进程（可把 ffmpeg 所在目录放进 PATH）、记录日志、把失败归为“降级” |
 | `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；限速、重试、识别拦截 |
 | `adapters/exports.py` | 各平台导出的数据目录与图片目录对照；读取运行目录里的全部帖子；复制外部导出目录 |
-| `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片、解析“1.2万”这类计数、话题标签 |
+| `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片和视频、解析“1.2万”这类计数、话题标签 |
 | `adapters/<平台>.py` | `xhs`、`douyin`、`bilibili`、`zhihu`、`nowcoder`：把一条原始记录转成 `Post` |
-| `urls.py` | 各平台的稳定链接、去掉会话和分享参数、从链接反查帖子键 |
-| `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本 |
-| `screening.py` | 可解释的规则初筛 |
-| `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数和抓取间隔 |
+| `urls.py` | 各平台的稳定链接、去掉会话和分享参数、从链接反查帖子键；B 站 av 号和 BV 号互转 |
+| `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本和逐版升级 |
+| `screening.py` | 可解释的规则初筛；标出 B 站面试录音 |
+| `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数和抓取间隔；挑出要下载的录音 |
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
+| `audio.py` | 用 ffmpeg 把录音视频转成单声道、响度均衡的 `audio.flac`；打包器接受替换的提取函数，测试不需要 ffmpeg |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor` 和网页共用 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
@@ -37,7 +38,7 @@
 |---|---|---|---|---|
 | `xhs` | 小红书 | MediaCrawler | `mediacrawler-xhs` | 笔记 ID |
 | `dy` | 抖音 | MediaCrawler | `mediacrawler-dy` | aweme ID |
-| `bili` | B站 | MediaCrawler | `mediacrawler-bili` | av 号（数字） |
+| `bili` | B站 | MediaCrawler | `mediacrawler-bili` | av 号（数字；BV 链接换算成 av 号） |
 | `zhihu` | 知乎 | MediaCrawler | `mediacrawler-zhihu` | `answer-…`、`article-…`、`zvideo-…`（三类 ID 各自编号，会重复） |
 | `nowcoder` | 牛客 | `sources/nowcoder.py` | `nowcoder` | 讨论帖数字 ID，或动态的 32 位 UUID（小写） |
 
@@ -70,7 +71,8 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 **一篇帖子只走一个入口，能读正文就不看图。** 两个入口都走会让同一道题在采集题库里出现两次。
 正文已经列出题目（至少 3 道且不少于图片张数，规则在 `bodytext.py`）时走 `web-intake`，图片不打包；
 否则有图就走 `ingest images`。看图比读正文贵得多，而第一次试导入的 5 篇里有 4 篇的图只是正文的排版。
-题数门槛和“不少于图片张数”保证误判只会多看图、不会漏题。视频帖的视频不进素材包，只导入正文。
+题数门槛和“不少于图片张数”保证误判只会多看图、不会漏题。视频帖的视频不进素材包，只导入正文；
+下载过的 B 站录音例外，走第三个入口 `media`（见下面的“只转写面试录音”）。
 带 `#牛客AI配图神器#` 的帖子有一张图是牛客按正文生成的思维导图，计算图片张数时减去这一张：
 只有这一张图的帖子读正文；另有截图的照常按剩下的张数判断，所以不会因此漏掉截图里的题。
 
@@ -92,27 +94,42 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 请求一次一个、有固定间隔和抖动，429 按 `Retry-After` 等待，遇到验证页就停下并记为降级，而不是换着法子绕过。
 原始记录去掉作者资料和 IP 属地，只留作者 ID 的哈希。
 
-**视频只用文字。** B 站、知乎视频不下载媒体（`--get_media no`），只导入标题、简介或文案；
+**视频默认只用文字，只转写面试录音。** 搜索时 B 站、知乎视频不下载媒体（`--get_media no`），只导入标题、简介或文案；
 抖音和小红书需要下载图文帖的图片，MediaCrawler 的同一个开关也会下载视频，Gleaner 不读取它们，打包时也不带。
+按工作区里已有的视频评估，值得转写的是 B 站上候选人自己录的真实面试：抖音的视频是一题一讲加资料引流，
+小红书的是广告；B 站 19 个视频里从标题看有 4 个是录音，其余是复盘、讲题或课程。试转的两段录音导入了 33 道题。所以：
+
+- 初筛只在视频的标题和简介里找“录音”“实录”“面试全程”“真实面试”这类词，命中记 `recording:<词>` 并算作面试证据；
+  只有这些视频（或者手动指定的 B 站视频）才下载音视频，每次一个 detail 运行，不在搜索时全局打开 `--get_media`。
+- 下载走 MediaCrawler 的 detail 模式，链接先换成 BV 号（它不认 av 链接）；B 站的画面和声音分开下载，
+  需要 ffmpeg 合成，所以 ffmpeg 所在目录会放到子进程的 PATH 前面；下载比搜索慢得多，超时单独设置（默认 1 小时）。
+- 打包时用 ffmpeg 提取 16 kHz 单声道音频并做动态响度均衡（`dynaudnorm`）。远程面试录的是候选人这边，
+  面试官的声音常常很小，Interview Bank 的转写开着静音检测（VAD），不均衡的话面试官的问题会被当成静音丢掉。
+  视频本身不进素材包，只放 `audio.flac`。
+- 转写交给 Interview Bank（`media` → `media-transcribe` → `media-task`），Gleaner 不装 faster-whisper；
+  试点里 `large-v3-turbo` 在 CPU 上用录音时长的 0.16–0.37 倍，不比 `small`（约 0.4 倍）慢，专业词明显更准。
+  转写仍会听错专业词、漏掉面试官的话，
+  HANDOFF.md 要求逐题改正并写 `correction`，从回答推断的题要降低置信度并说明。
 
 **输出布局统一成 MediaCrawler 的样子。** 牛客读取器写出 `raw/nowcoder/jsonl/*.jsonl` 和 `raw/nowcoder/media/<ID>/001.jpg`，
 所以导入、`gleaner import` 和图片查找对所有平台走同一套代码（`adapters/exports.py`）。
 
 ## 数据库
 
-`gleaner.db` 由 `store.py` 管理，`meta.schema_version` 记录版本，打开更新版本创建的工作区会直接拒绝。
+`gleaner.db` 由 `store.py` 管理，`meta.schema_version` 记录版本，打开更新版本创建的工作区会直接拒绝；
+旧版本的工作区打开时按 `_UPGRADES` 逐版升级（第 2 版给 `posts` 加了 `media` 列）。
 
 | 表 | 内容 |
 |---|---|
-| `runs` | 每次抓取或导入：来源、模式、参数、状态、降级原因、计数 |
-| `posts` | 帖子内容、图片路径（相对工作区）、互动数、标签与理由、打包记录 |
+| `runs` | 每次抓取或导入：来源、模式、参数（下载录音的运行带 `media: true`）、状态、降级原因、计数 |
+| `posts` | 帖子内容、图片和录音视频的路径（相对工作区）、互动数、标签与理由、打包记录 |
 | `checkpoints` | 每个关键词见过的最新发布时间，供以后做增量抓取 |
 
 ## 扩展新来源
 
 1. 在 `models.PLATFORMS` 登记平台代码和名称，在 `urls.py` 增加稳定链接的生成和反查。
 2. 在 `adapters/` 下把一条原始记录转成 `Post`，`url` 必须是去掉会话参数后的稳定链接；在 `adapters/exports.py` 登记数据目录和图片目录。
-3. MediaCrawler 已支持的平台：在 `sources/mediacrawler.PLATFORMS` 登记分页大小和是否下载媒体。
+3. MediaCrawler 已支持的平台：在 `sources/mediacrawler.PLATFORMS` 登记分页大小、是否下载媒体、能不能下载录音。
    其他来源：在 `sources/` 下实现 `Fetcher`，按上面的布局写出原始记录，失败时返回 `degraded` 而不是抛异常；
    在 `pipeline.fetcher_for`、`source_name` 里接上。
 4. 在 `web/progress.py` 给出步骤和日志标记，在 `web/server.py` 的 `_HINTS` 写一句抓取说明。

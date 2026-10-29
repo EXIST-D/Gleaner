@@ -13,7 +13,7 @@ Gleaner 只负责“发现 → 抓取 → 筛选 → 打包”。题目抽取、
 |---|---|---|---|
 | 小红书 | `xhs` | MediaCrawler，扫码登录；搜索每页 20 篇 | 正文 + 图文帖的图片 |
 | 抖音 | `dy` | MediaCrawler，扫码登录；搜索每页 10 篇 | 文案 + 图集的图片；视频帖只用文案 |
-| B 站 | `bili` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题和简介（不下载视频） |
+| B 站 | `bili` | MediaCrawler，扫码登录；搜索每页 20 个 | 标题和简介；面试录音可以下载音视频，交给 Interview Bank 转写 |
 | 知乎 | `zhihu` | MediaCrawler，扫码登录；搜索每页 20 条 | 回答、文章的纯文字正文 |
 | 牛客 | `nowcoder` | Gleaner 直接读取，不登录、不用站内搜索 | 讨论帖和动态的正文 + 图片 |
 
@@ -30,10 +30,10 @@ gleaner crawl / import ──► 工作区 SQLite：帖子按「平台 + 帖子 
 gleaner screen ──► 规则初筛：疑似真实面经 / 题目合集 / 广告卖课 / 无关 / 拿不准（只打标签，不删除）
         │
         ▼
-gleaner pack ──► 素材包：manifest.json + 每篇的 body.txt 与图片 + HANDOFF.md（含导入命令）
+gleaner pack ──► 素材包：manifest.json + 每篇的 body.txt 与图片（录音是 audio.flac）+ HANDOFF.md（含导入命令）
         │
         ▼
-Interview Bank（Agent）──► 采集题库：ingest images / web-intake → 抽题 → 去重 → 提交
+Interview Bank（Agent）──► 采集题库：ingest images / web-intake / media 转写 → 抽题 → 去重 → 提交
 ```
 
 为什么是独立的采集题库：个人题库的出现次数代表“你自己搜集到的面经”，批量抓来的帖子如果混进去，
@@ -45,6 +45,7 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake →
 - 你自己下载安装的 MediaCrawler（需要 uv、Node.js 和新版 Chrome），见 [MediaCrawler 接入](docs/mediacrawler.md)。
   只抓牛客时不需要它，见 [牛客读取](docs/nowcoder.md)。
 - 导入素材包时需要 Interview Bank 的 `ibank.py`（Python 3.10+）和一个支持 Agent Skills 的 Agent。
+- 只有转写 B 站面试录音时才需要：[ffmpeg](https://ffmpeg.org/)，和一个装了 `faster-whisper` 的 Python（见下文「B 站面试录音」）。
 
 ## 快速开始
 
@@ -86,8 +87,31 @@ gleaner pack --limit 20
 已经用 MediaCrawler 的 WebUI 或命令行抓过的数据，可以直接导入：`gleaner import <MediaCrawler 的 data 目录>`，
 里面的 `xhs/`、`douyin/`、`bili/`、`zhihu/` 会一起导入（其他平台的目录会跳过）。
 
-帖子键是 `平台代码:帖子 ID`，例如 `xhs:6650a1b2c3d4`、`dy:7300…`、`bili:115…`（av 号）、
+帖子键是 `平台代码:帖子 ID`，例如 `xhs:6650a1b2c3d4`、`dy:7300…`、`bili:115…`（av 号，BV 链接也能认出）、
 `zhihu:answer-…` / `zhihu:article-…`、`nowcoder:945…`（讨论帖）或 `nowcoder:<32 位 UUID>`（动态）。
+
+### B 站面试录音
+
+B 站上有人把自己的真实面试录下来发成视频，题都在声音里。初筛会把标题或简介里有“录音”“实录”“面试全程”
+“真实面试”这类词的视频标成录音（理由里是 `recording:<词>`），这些视频可以下载下来，打包时转成音频交给 Interview Bank 转写：
+
+```bash
+gleaner media --dry-run                 # 看看哪些视频会下载：标成录音、还没下载、也没打包的
+gleaner media                           # 一个接一个下载（半小时的录音可能要十几分钟）
+gleaner media bili:<av 号>               # 或者只下载指定的视频；也可以 gleaner crawl bili --url <链接> --media
+gleaner pack --key bili:<av 号>          # 打包时用 ffmpeg 提取单声道音频并做响度均衡，生成 audio.flac
+```
+
+需要的准备：
+
+- **ffmpeg**：B 站的画面和声音分开下载，MediaCrawler 用它合成（找不到时会退回低清晰度、可能不完整的视频）；
+  打包时也用它提取音频。不在 PATH 上时在 `[media] ffmpeg` 写路径，文件名必须叫 `ffmpeg`（可以是链接）。
+- **转写用的 Python**：`pip install faster-whisper`，在 `[handoff] asr_python` 写上它的路径。
+  HANDOFF.md 里的 `media` / `media-transcribe` / `media-task` 命令都用它运行；默认模型 `large-v3-turbo`，
+  每个采集题库第一次转写时下载约 1.5 GB，之后只在本机运行，在 CPU 上转写一段录音大约要录音时长的 1/6 到 1/3。
+
+转写文本会听错专业词（例如 Redis 听成 Lilis，幂等听成密等），远程面试里面试官的声音也常常太小没转出来，
+所以 HANDOFF.md 要求 Agent 逐题改正并在 `correction` 里说明，只有回答能清楚看出问题时才补出题目。
 
 ## 网页控制台
 
@@ -102,8 +126,10 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
   （例如小红书是 启动浏览器 → 登录 → 搜索 → 下载 → 导入与初筛，牛客是 翻阅面经列表 → 读取帖子 → 下载图片 → 导入与初筛），
   需要扫码、输入验证码或点确认框时会醒目提示（扫码按 MediaCrawler 的 10 分钟等待倒计时），牛客要求放慢时会提示正在等待；
   下方是实时日志，可以随时停止。批量上限、同一平台两次抓取的最小间隔、去重和初筛与命令行完全相同。
-- **帖子**：按平台、标签、是否打包筛选或搜索；卡片上能看到封面、平台、标签，以及打包时会“读正文”还是“看图”。
-  点开一篇可以看全部图片和正文、一键改标签、打开原帖；勾选后点“打包所选”。
+  B 站按链接抓取时可以勾选“同时下载音视频”。
+- **帖子**：按平台、标签、是否打包筛选或搜索；卡片上能看到封面、平台、标签，以及打包时会“读正文”还是“看图”，
+  B 站视频会标出“面试录音”或“录音 · 已下载”。点开一篇可以看全部图片和正文、一键改标签、打开原帖；
+  B 站视频有“下载音视频”按钮（会转到抓取页看进度）；勾选后点“打包所选”。
 - **素材包**：每个包的 HANDOFF.md，命令可以一键复制。
 - **题库**：Agent 导入采集题库后整理好的题目。按领域分组、按出现次数排序，可以按公司、领域筛选或搜索；
   点开一道题能看到参考答案（有的话）、每次出现的原文、公司、轮次、来源截图，以及原帖和 Gleaner 帖子的链接，
@@ -124,8 +150,9 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | 命令 | 作用 |
 |---|---|
 | `init` | 创建工作区：`gleaner.toml`、`gleaner.db`、`runs/`、`packs/` |
-| `doctor` | 检查 MediaCrawler 目录与启动命令、默认关键词、`ibank.py`、采集题库 |
-| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛 |
+| `doctor` | 检查 MediaCrawler 目录与启动命令、默认关键词、`ibank.py`、采集题库、ffmpeg 和转写用的 Python |
+| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；B 站加 `--media` 同时下载音视频 |
+| `media [key…]` | 下载 B 站面试录音的音视频；不写帖子键就下载初筛标成录音、还没下载也没打包的视频；`--dry-run` 只列出 |
 | `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
 | `screen [--all]` | 对未打标签的帖子初筛；`--all` 重判以前的规则标签，人工标签不动 |
 | `list` / `show` | 查看帖子、标签和初筛理由；`list --platform` 按平台筛选 |
@@ -151,7 +178,7 @@ Gleaner/
     ├── gleaner.db         # 帖子、标签、抓取记录、关键词进度
     ├── runs/<run-id>/
     │   ├── mediacrawler.log   # MediaCrawler 的完整输出（牛客是 nowcoder.log）
-    │   └── raw/<平台目录>/     # 原始导出（jsonl + media/），如 xhs/、douyin/ 与 dy/、nowcoder/
+    │   └── raw/<平台目录>/     # 原始导出（jsonl + media/），如 xhs/、douyin/ 与 dy/、nowcoder/；B 站录音在 bili/media/<BV 号>/
     └── packs/<pack-id>/   # 交给 Interview Bank 的素材包，格式见 docs/pack-format.md
 ```
 
@@ -184,8 +211,6 @@ CI 在 Windows、macOS、Linux × Python 3.11–3.13 上运行测试和 lint。�
 
 ## 计划
 
-- 视频帖的口述内容：B 站、抖音的面试复盘视频目前只导入标题和简介，以后可以交给 Interview Bank 的
-  `ingest media` 本地转写
 - 可选的大模型复判：规则拿不准的帖子再交给模型判断
 - 采集题库与个人题库的覆盖对照
 

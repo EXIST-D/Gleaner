@@ -11,7 +11,9 @@ from gleaner.errors import GleanerError
 from gleaner.models import LABELS, Post, PostRecord
 
 DB_NAME = "gleaner.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+_UPGRADES = {2: "ALTER TABLE posts ADD COLUMN media TEXT"}
+"""Statement that brings a workspace from the previous version to the key's version."""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS posts (
     packed_in TEXT,
     packed_at TEXT,
     changed_after_pack INTEGER NOT NULL DEFAULT 0,
+    media TEXT,
     UNIQUE (platform, post_id)
 );
 CREATE INDEX IF NOT EXISTS posts_label ON posts (label);
@@ -108,14 +111,24 @@ class Store:
 
     def _migrate(self) -> None:
         with self._db:
-            self._db.executescript(_SCHEMA)
-            row = self._db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-            if row is None:
-                self._db.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
-                )
-            elif int(row["value"]) > SCHEMA_VERSION:
+            existing = self._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
+            ).fetchone()
+            row = (
+                existing
+                and self._db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+            )
+            version = int(row["value"]) if row else None
+            if version is not None and version > SCHEMA_VERSION:
                 raise GleanerError("工作区由更新版本的 Gleaner 创建，请先升级 Gleaner")
+            for target in range((version or SCHEMA_VERSION) + 1, SCHEMA_VERSION + 1):
+                self._db.execute(_UPGRADES[target])
+            self._db.executescript(_SCHEMA)
+            self._db.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', ?)"
+                " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (str(SCHEMA_VERSION),),
+            )
 
     # Runs
 
@@ -162,6 +175,11 @@ class Store:
             keywords = list(dict.fromkeys([*old.post.keywords, *post.keywords]))
             content_changed = old.post.content_hash != post.content_hash
             images_arrived = bool(post.images) and not old.post.images
+            media_arrived = bool(post.media) and post.media != old.post.media
+            if media_arrived:
+                self._db.execute("UPDATE posts SET media = ? WHERE key = ?", (post.media, post.key))
+                if old.packed_in:
+                    self._db.execute("UPDATE posts SET changed_after_pack = 1 WHERE key = ?", (post.key,))
             self._db.execute(
                 "UPDATE posts SET keywords = ?, metrics = ?, open_url = ?, last_run = ?, last_seen_at = ?"
                 " WHERE key = ?",
@@ -175,7 +193,7 @@ class Store:
                 ),
             )
             if not content_changed and not images_arrived:
-                return "unchanged"
+                return "updated" if media_arrived else "unchanged"
             images = post.images if images_arrived else old.post.images
             self._db.execute(
                 "UPDATE posts SET title = ?, body = ?, kind = ?, published_at = ?, tags = ?, images = ?,"
@@ -206,7 +224,8 @@ class Store:
         self._db.execute(
             "INSERT INTO posts (key, platform, post_id, url, open_url, title, body, kind, published_at, tags,"
             " keywords, images, remote_image_count, metrics, author_hash, content_hash, first_run, last_run,"
-            " first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " first_seen_at, last_seen_at, media)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 post.key,
                 post.platform,
@@ -228,6 +247,7 @@ class Store:
                 run_id,
                 now,
                 now,
+                post.media,
             ),
         )
 
@@ -373,6 +393,7 @@ def _record(row: sqlite3.Row) -> PostRecord:
         remote_image_count=row["remote_image_count"],
         metrics=json.loads(row["metrics"]),
         author_hash=row["author_hash"],
+        media=row["media"],
     )
     return PostRecord(
         post=post,

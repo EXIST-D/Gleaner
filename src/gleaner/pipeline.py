@@ -11,8 +11,8 @@ from gleaner.adapters.common import ParseReport
 from gleaner.adapters.exports import copy_export, iter_posts
 from gleaner.config import Config
 from gleaner.errors import GleanerError
-from gleaner.models import PLATFORMS
-from gleaner.screening import Screener
+from gleaner.models import PLATFORMS, PostRecord
+from gleaner.screening import Screener, is_recording
 from gleaner.sources import mediacrawler
 from gleaner.sources.base import Fetcher
 from gleaner.sources.mediacrawler import MediaCrawlerDriver, Runner, search_notes_per_keyword
@@ -63,12 +63,49 @@ def fetcher_for(
     on_line: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     echo: bool = True,
+    media: bool = False,
 ) -> Fetcher:
-    """MediaCrawler for the platforms it crawls, Gleaner's own reader for Nowcoder."""
+    """MediaCrawler for the platforms it crawls, Gleaner's own reader for Nowcoder.
+
+    With media, the crawl also downloads the videos, for platforms whose recordings Gleaner transcribes.
+    """
     _check_platform(platform)
+    if media:
+        check_recordings(platform)
     if platform == "nowcoder":
         return NowcoderFetcher(config.nowcoder, on_line=on_line, should_stop=should_stop, echo=echo)
-    return MediaCrawlerDriver(config.mediacrawler, runner, platform=platform, echo=echo)
+    return MediaCrawlerDriver(
+        config.mediacrawler, runner, platform=platform, echo=echo, media=config.media if media else None
+    )
+
+
+def check_recordings(platform: str) -> None:
+    spec = mediacrawler.PLATFORMS.get(platform)
+    if spec is None or not spec.recordings:
+        names = "、".join(
+            PLATFORMS[code].label for code, item in mediacrawler.PLATFORMS.items() if item.recordings
+        )
+        raise GleanerError(f"只有{names}的面试录音可以下载音视频，{PLATFORMS[platform].label}不支持")
+
+
+def recordings_to_download(store: Store, keys: list[str] | None = None) -> list[PostRecord]:
+    """Posts whose video should be downloaded: the given keys, else unpacked videos flagged as recordings."""
+    if keys:
+        records = store.posts(keys=keys)
+        missing = set(keys) - {record.post.key for record in records}
+        if missing:
+            raise GleanerError(f"找不到帖子 {'、'.join(sorted(missing))}")
+        for record in records:
+            check_recordings(record.post.platform)
+        return [record for record in records if not record.post.media]
+    candidates = store.posts(
+        platforms=[code for code, spec in mediacrawler.PLATFORMS.items() if spec.recordings]
+    )
+    return [
+        record
+        for record in candidates
+        if not record.post.media and not record.packed_in and is_recording(record.label_reasons)
+    ]
 
 
 @dataclass
@@ -79,6 +116,8 @@ class ImportSummary:
     updated: int = 0
     unchanged: int = 0
     skipped: int = 0
+    media: int = 0
+    """Posts of this run that come with a downloaded recording."""
     labels: Counter = field(default_factory=Counter)
     errors: list[str] = field(default_factory=list)
 
@@ -90,6 +129,7 @@ class ImportSummary:
             "updated": self.updated,
             "unchanged": self.unchanged,
             "skipped": self.skipped,
+            "media": self.media,
             "labels": dict(self.labels),
             "errors": self.errors[:20],
         }
@@ -138,9 +178,15 @@ def crawl(
     max_notes: int | None,
     force: bool,
     now: datetime,
+    media: bool = False,
 ) -> CrawlOutcome:
+    """One crawl and its import. With media the fetcher must download videos too (see `fetcher_for`)."""
     _check_platform(platform)
     mode = "detail" if targets else "search"
+    if media:
+        check_recordings(platform)
+        if not targets:
+            raise GleanerError("下载音视频要指定视频链接")
     if mode == "search" and not keywords:
         raise GleanerError("没有关键词：用 --keyword 指定，或在 gleaner.toml 的 keywords 里配置")
     check_interval(store, config, now, force, platform=platform)
@@ -156,6 +202,8 @@ def crawl(
             config, platform=platform, keywords=keywords, targets=targets, max_notes=max_notes
         ),
     }
+    if media:
+        params["media"] = True
     store.begin_run(
         run_id,
         source=source_name(platform),
@@ -173,10 +221,15 @@ def crawl(
         max_notes=max_notes,
     )
     summary = import_raw(store, config, run_id=run_id, raw_dir=raw_dir, now=now)
-    store.finish_run(
-        run_id, status=result.status, message=result.message, counts=summary.as_dict(), now=iso(now)
-    )
-    return CrawlOutcome(run_id, result.status, result.message, summary)
+    status, message = result.status, result.message
+    if media and status == "ok" and summary.media < len(targets):
+        status = "degraded"
+        message = (
+            f"{len(targets)} 个视频只下载到 {summary.media} 个音视频；MediaCrawler 连续下载长视频时偶尔会中断，"
+            "可以对没下载到的视频单独再试一次"
+        )
+    store.finish_run(run_id, status=status, message=message, counts=summary.as_dict(), now=iso(now))
+    return CrawlOutcome(run_id, status, message, summary)
 
 
 def import_export(store: Store, config: Config, source: Path, *, now: datetime) -> CrawlOutcome:
@@ -208,6 +261,8 @@ def import_raw(store: Store, config: Config, *, run_id: str, raw_dir: Path, now:
     for post in iter_posts(raw_dir, config.workspace, report):
         outcome = store.upsert_post(post, run_id=run_id, now=stamp)
         setattr(summary, outcome, getattr(summary, outcome) + 1)
+        if post.media:
+            summary.media += 1
         if post.published_at:
             for keyword in post.keywords:
                 store.advance_checkpoint(source_name(post.platform), keyword, post.published_at, now=stamp)

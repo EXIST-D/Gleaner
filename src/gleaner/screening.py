@@ -99,6 +99,15 @@ COLLECTION_TERMS = (
     "道面试题",
     "面试题分享",
 )
+# A video that is the interview itself rather than someone talking about it; worth downloading and transcribing.
+RECORDING_TERMS = (
+    "录音",
+    "实录",
+    "面试全程",
+    "全程面试",
+    "真实面试",
+)
+RECORDING = "recording:"
 
 MIN_BODY_CHARS = 40
 # Douyin and Xiaohongshu captions trail a row of topics that would pass for body text.
@@ -148,6 +157,7 @@ class Screener:
     promo: tuple[str, ...]
     strong_promo: tuple[str, ...]
     collection: tuple[str, ...]
+    recording: tuple[str, ...] = RECORDING_TERMS
 
     @classmethod
     def from_config(cls, config: ScreeningConfig) -> Screener:
@@ -157,6 +167,7 @@ class Screener:
             promo=_merge(PROMO_TERMS, config.promo_terms),
             strong_promo=_merge(STRONG_PROMO_TERMS, config.strong_promo_terms),
             collection=_merge(COLLECTION_TERMS, config.collection_terms),
+            recording=_merge(RECORDING_TERMS, config.recording_terms),
         )
 
     def screen(self, post: Post) -> Verdict:
@@ -167,22 +178,31 @@ class Screener:
         strong = _hits(text, self.strong_promo)
         collection = _hits(text, self.collection)
         domains = spam_domains(text)
-        evidence = [f"interview:{t}" for t in interview] + [f"event:{t}" for t in event]
+        recording = _hits(text, self.recording) if post.kind == "video" else []
+        evidence = (
+            [f"interview:{t}" for t in interview]
+            + [f"event:{t}" for t in event]
+            + [f"{RECORDING}{t}" for t in recording]
+        )
 
         if strong or len(promo) >= 2 or len(domains) >= MIN_SPAM_DOMAINS:
             reasons = [f"promo:{t}" for t in dict.fromkeys([*strong, *promo])]
             if len(domains) >= MIN_SPAM_DOMAINS:
                 reasons.append(f"promo:{len(domains)} 个外部域名（{'、'.join(domains[:3])} 等）")
             return Verdict("promo", tuple(reasons))
-        if not interview and not event:
+        if not interview and not event and not recording:
             return Verdict("irrelevant", ("no-interview-terms",))
-        if collection and not event:
+        if collection and not event and not recording:
             return Verdict("collection", tuple([*(f"collection:{t}" for t in collection), *evidence]))
         has_text = len(HASHTAG.sub("", post.body).strip()) >= MIN_BODY_CHARS
         has_material = bool(post.images) or post.remote_image_count > 0 or has_text
-        if event or has_material:
+        if event or recording or has_material:
             return Verdict("candidate", tuple(evidence + [f"promo:{t}" for t in promo]))
         return Verdict("unclear", tuple([*evidence, "too-little-content"]))
+
+
+def is_recording(reasons: list[str] | tuple[str, ...]) -> bool:
+    return any(reason.startswith(RECORDING) for reason in reasons)
 
 
 def _merge(defaults: tuple[str, ...], extra: tuple[str, ...]) -> tuple[str, ...]:

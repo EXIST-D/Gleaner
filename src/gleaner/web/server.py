@@ -38,6 +38,8 @@ from gleaner.pipeline import (
     platform_of,
     seconds_until_next_crawl,
 )
+from gleaner.screening import is_recording
+from gleaner.sources import mediacrawler
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
 from gleaner.urls import post_key
@@ -419,6 +421,7 @@ class WebApp:
                 "images": [f"/media/{path}" for path in post.images],
                 "remote_image_count": post.remote_image_count,
                 "open_url": post.open_url,
+                "media_path": post.media,
                 "label_reasons": record.label_reasons,
                 "label_source": record.label_source,
                 "first_seen_at": record.first_seen_at,
@@ -449,6 +452,7 @@ class WebApp:
                     "posts": len(entries),
                     "image_posts": sum(entry.get("intake") == "images" for entry in entries),
                     "text_posts": sum(entry.get("intake") == "text" for entry in entries),
+                    "media_posts": sum(entry.get("intake") == "media" for entry in entries),
                     "titles": [entry.get("title", "") for entry in entries[:4]],
                 }
             )
@@ -493,6 +497,7 @@ class WebApp:
                 targets=_strings(payload.get("urls")),
                 max_notes=_optional_int(payload.get("max_notes")),
                 force=bool(payload.get("force")),
+                media=bool(payload.get("media")),
             )
             return json_response({"ok": True, "job": job.snapshot()})
         if path == "/api/crawl/stop":
@@ -540,6 +545,8 @@ class WebApp:
     def _brief(self, record: PostRecord) -> dict:
         post = record.post
         local = [path for path in post.images if (self.workspace / path).is_file()]
+        media = bool(post.media and (self.workspace / post.media).is_file())
+        spec = mediacrawler.PLATFORMS.get(post.platform)
         return {
             "key": post.key,
             "platform": post.platform,
@@ -552,8 +559,11 @@ class WebApp:
             "label_title": LABEL_TITLES.get(record.label or "", "未初筛"),
             "images": len(local),
             "thumb": f"/media/{local[0]}" if local else None,
-            "intake": choose_intake(post.body, len(local)),
+            "intake": "media" if media else choose_intake(post.body, len(local)),
             "body_questions": len(listed_questions(post.body)),
+            "media": media,
+            "recording": is_recording(record.label_reasons),
+            "can_download_media": bool(spec and spec.recordings and post.kind == "video"),
             "likes": post.metrics.get("liked_count"),
             "packed_in": record.packed_in,
             "excerpt": post.body[:90],
@@ -563,7 +573,8 @@ class WebApp:
 _HINTS = {
     "xhs": "小红书搜索按页返回，每页 {page} 篇；第一次需要扫码登录，帖子图片会下载下来看图导入。",
     "dy": "抖音搜索每页 {page} 篇；图文帖下载图片，视频帖只导入文案（MediaCrawler 会顺带下载封面和整段视频）。",
-    "bili": "B 站搜索每页 {page} 个视频；只导入标题和简介，不下载视频。",
+    "bili": "B 站搜索每页 {page} 个视频，只导入标题和简介。面试录音可以在帖子详情里下载音视频，"
+    "打包时转成音频交给 Interview Bank 转写；按链接抓取时也可以勾选下载音视频。",
     "zhihu": "知乎搜索每页 {page} 条（回答、文章、视频）；导入纯文字正文。",
     "nowcoder": "不登录、不使用站内搜索：翻阅最新面经列表（最多 {scan} 页，每页 20 篇），"
     "保存标题或摘要里包含关键词全部词语的帖子，按篇数保存。",
@@ -584,6 +595,7 @@ def _platform_option(store: Store, config: Config, code: str, now) -> dict:
         "engine": "nowcoder" if code == "nowcoder" else "mediacrawler",
         "steps": [{"name": step, "title": titles[step]} for step in steps],
         "hint": _HINTS[code].format(page=size, scan=config.nowcoder.scan_pages),
+        "recordings": bool(code in mediacrawler.PLATFORMS and mediacrawler.PLATFORMS[code].recordings),
     }
 
 

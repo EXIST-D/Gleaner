@@ -2,6 +2,21 @@
 
 ## 未发布
 
+- B 站面试录音转写：
+  - 初筛在视频的标题和简介里找“录音”“实录”“面试全程”“真实面试”等词（`[screening] recording_terms` 可补充），
+    命中记 `recording:<词>` 并算作面试证据。已有标签需要 `gleaner screen --all` 才会重判。
+  - 新命令 `gleaner media [帖子键…]`（`--dry-run` 只列出）下载标成录音、还没打包的 B 站视频；
+    `crawl bili --url … --media` 下载指定视频。网页帖子详情有“下载音视频”按钮，抓取页指定链接时可以勾选下载音视频。
+    下载通过 MediaCrawler 的 detail 模式和 `--get_media yes`，ffmpeg 所在目录放进子进程 PATH，超时用新的
+    `[media] download_timeout_seconds`（默认 1 小时）；没拿到全部视频时记为降级。
+  - 打包：下载过的录音走新的 `media` 入口，用 ffmpeg 提取 16 kHz 单声道、动态响度均衡的 `audio.flac`
+    （远程面试里面试官的声音常常很小）；HANDOFF.md 给出 Interview Bank 的 `media`、`media-transcribe`
+    （`[handoff] asr_model`，默认 `large-v3-turbo`，用 `[handoff] asr_python` 运行）和 `media-task` 命令，
+    并要求改正听错的专业词、推断出的题降低置信度、不收自我介绍和反问。Interview Bank 每个题库各自缓存模型，
+    第一次转写要下载约 1.5 GB。
+  - `doctor` 新增 ffmpeg 和 `asr_python` 两项检查；数据库升到第 2 版（帖子记录视频路径），打开旧工作区时自动升级。
+- B 站：`crawl bili --url` 可以用 av 链接或 av 号了。MediaCrawler 只认 BV 号，之前会报 `Unable to parse video ID`；
+  BV 链接也能反查到帖子键。
 - 初筛：正文长度不算话题标签，抖音“一句标题 + 一串 #面经 #后端面试”的单题视频没有面试轮次时判为「拿不准」，不再算疑似真实面经；
   “fa你”（谐音躲“发你”）判为强广告词。已有标签需要 `gleaner screen --all` 才会重判。抖音第一次真实试抓的结果写进开发手册。
 - 不再支持快手：试抓两个关键词的 40 个视频全是无关内容或引流，搜不到互联网方向的真实面经。

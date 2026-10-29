@@ -1,8 +1,9 @@
 import unittest
+from dataclasses import replace
 
 from gleaner.config import ScreeningConfig
 from gleaner.models import Post
-from gleaner.screening import Screener
+from gleaner.screening import Screener, is_recording
 
 
 def post(title: str, body: str = "", *, images: int = 0) -> Post:
@@ -30,6 +31,20 @@ class ScreenerTest(unittest.TestCase):
         verdict = self.screener.screen(post("示例科技后端一面", "问了 Redis"))
         self.assertEqual(verdict.label, "candidate")
         self.assertIn("event:一面", verdict.reasons)
+
+    def test_a_video_of_the_interview_itself_is_a_recording_candidate(self):
+        video = replace(post("中小厂26届录音"), platform="bili", kind="video")
+        verdict = self.screener.screen(video)
+        self.assertEqual(verdict.label, "candidate")
+        self.assertEqual(verdict.reasons, ("recording:录音",))
+        self.assertTrue(is_recording(verdict.reasons))
+        self.assertFalse(is_recording(self.screener.screen(post("中小厂26届录音", "x" * 50)).reasons))
+        promo = replace(post("真实面试录音", "训练营学员上岸率"), kind="video")
+        self.assertEqual(self.screener.screen(promo).label, "promo")
+        custom = Screener.from_config(ScreeningConfig(recording_terms=("Interview Replay",)))
+        self.assertTrue(
+            is_recording(custom.screen(replace(post("后端 interview replay"), kind="video")).reasons)
+        )
 
     def test_screenshot_post_without_event_words_is_candidate(self):
         self.assertEqual(self.label("今天的面经", images=3), "candidate")

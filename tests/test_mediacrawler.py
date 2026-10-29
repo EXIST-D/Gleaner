@@ -1,16 +1,26 @@
+import os
 import sys
 import unittest
 from pathlib import Path
 
-from gleaner.config import MediaCrawlerConfig
+from gleaner.config import MediaConfig, MediaCrawlerConfig
 from gleaner.sources.mediacrawler import (
     LOG_NAME,
     MediaCrawlerDriver,
     build_command,
     diagnose,
+    make_runner,
     search_notes_per_keyword,
+    tool_dirs,
 )
-from tests.support import DOUYIN_VIDEO, WorkspaceTestCase, write_export, write_records
+from tests.support import (
+    BILI_RECORDING,
+    DOUYIN_VIDEO,
+    WorkspaceTestCase,
+    fake_tool,
+    write_export,
+    write_records,
+)
 
 
 class BuildCommandTest(unittest.TestCase):
@@ -78,6 +88,41 @@ class BuildCommandTest(unittest.TestCase):
             build_command(MediaCrawlerConfig(), mode="search", output_dir=Path("/w"), max_notes=1)
         with self.assertRaises(ValueError):
             build_command(MediaCrawlerConfig(), mode="creator", output_dir=Path("/w"), max_notes=1)
+
+    def test_bilibili_details_use_bv_links_and_may_download_the_video(self):
+        def pairs(**kwargs):
+            command = build_command(
+                MediaCrawlerConfig(),
+                platform="bili",
+                mode="detail",
+                output_dir=Path("/w"),
+                targets=["https://www.bilibili.com/video/av170001", "BV1xx411c7mD"],
+                max_notes=2,
+                **kwargs,
+            )
+            return dict(zip(command[3::2], command[4::2], strict=True))
+
+        self.assertEqual(
+            pairs()["--specified_id"], "https://www.bilibili.com/video/BV17x411w7KC,BV1xx411c7mD"
+        )
+        self.assertEqual(pairs()["--get_media"], "no")
+        self.assertEqual(pairs(media=True)["--get_media"], "yes")
+
+    def test_only_bilibili_details_download_recordings(self):
+        for platform, mode in (("bili", "search"), ("dy", "detail")):
+            with self.subTest(platform=platform, mode=mode), self.assertRaises(ValueError):
+                build_command(
+                    MediaCrawlerConfig(),
+                    platform=platform,
+                    mode=mode,
+                    output_dir=Path("/w"),
+                    keywords=["a"],
+                    targets=["1"],
+                    max_notes=1,
+                    media=True,
+                )
+        with self.assertRaises(ValueError):
+            MediaCrawlerDriver(MediaCrawlerConfig(), platform="xhs", media=MediaConfig())
 
 
 REJECTED_SEARCH_LOG = """\
@@ -202,6 +247,44 @@ class DriverTest(WorkspaceTestCase):
         result = driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["k"])
         self.assertEqual(result.returncode, 2)
         self.assertIn("hello", (self.raw.parent / LOG_NAME).read_text(encoding="utf-8"))
+
+    def test_recordings_need_ffmpeg_and_get_the_longer_timeout(self):
+        media = MediaConfig(ffmpeg=str(self.workspace / "bin" / "ffmpeg"), download_timeout_seconds=1800)
+        driver = MediaCrawlerDriver(self.config, lambda *args: 0, platform="bili", media=media)
+        self.assertIn("找不到 ffmpeg", "".join(driver.problems()))
+
+        ffmpeg = fake_tool(self.workspace / "bin", "ffmpeg")
+        media = MediaConfig(ffmpeg=str(ffmpeg), download_timeout_seconds=1800)
+
+        def runner(command, cwd, timeout, log_path):
+            self.calls.append((list(command), cwd, timeout))
+            write_records(self.raw, "bili", [BILI_RECORDING], mode="detail")
+            return 0
+
+        driver = MediaCrawlerDriver(self.config, runner, platform="bili", media=media)
+        self.assertEqual(driver.problems(), [])
+        result = driver.run(
+            mode="detail", output_dir=self.raw, log_dir=self.raw.parent, targets=["1150000002"]
+        )
+        self.assertTrue(result.ok, result.message)
+        command, _, timeout = self.calls[0]
+        self.assertEqual(timeout, 1800)
+        self.assertEqual(command[command.index("--get_media") + 1], "yes")
+        self.assertEqual(tool_dirs(str(ffmpeg)), [ffmpeg.parent])
+
+        renamed = fake_tool(self.workspace / "bin", "ffmpeg-7.1")
+        driver = MediaCrawlerDriver(
+            self.config, runner, platform="bili", media=MediaConfig(ffmpeg=str(renamed))
+        )
+        self.assertIn("名为 ffmpeg 的链接", "".join(driver.problems()))
+
+    def test_default_runner_puts_tool_dirs_first_on_path(self):
+        (self.home / "main.py").write_text("import os\nprint(os.environ['PATH'])\n", encoding="utf-8")
+        tools = self.workspace / "tools"
+        runner = make_runner(path_dirs=[tools])
+        log = self.raw.parent / LOG_NAME
+        self.assertEqual(runner([sys.executable, "main.py"], self.home, 30, log), 0)
+        self.assertTrue(log.read_text(encoding="utf-8").startswith(str(tools) + os.pathsep))
 
     def test_default_runner_enforces_timeout(self):
         (self.home / "main.py").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")

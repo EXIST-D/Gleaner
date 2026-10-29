@@ -50,12 +50,28 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 |---|---|---|---|---|
 | 小红书 | `yes` | 20 | `xhs/` / `xhs/media/` | 很多面经的题只在图片里；视频帖会下载封面和视频，Gleaner 只用正文 |
 | 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频（一条几十 MB），Gleaner 只用文案；MediaCrawler 给图集的链接也是 `/video/<ID>`，Gleaner 把 `/note/<ID>` 认作同一篇 |
-| B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字；空简介是 `-`）；真实面试录音的题都在声音里，简介很少列题 |
+| B 站 | `no`（下载录音时 `yes`） | 20 | `bili/` / `bili/media/<BV 号>/` | 只有标题和简介（MediaCrawler 截到 500 字；空简介是 `-`）；真实面试录音的题都在声音里，简介很少列题，见下文「B 站面试录音」 |
 | 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起；`&#34;` 这类实体由 Gleaner 解码）；视频只有标题和简介，其他类型会跳过；作者昵称被 MediaCrawler 打码 |
 
 MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一页，其余按整页向下取整，
 所以抖音选 25 篇实际是 20 篇。`--url` 指定帖子时，各平台接受的格式和 MediaCrawler 的 `config/<平台>_config.py` 一致：
 小红书要带 `xsec_token` 的完整链接；抖音是视频或图文链接；B 站是视频链接或 BV 号；知乎是回答、文章或视频链接。
+MediaCrawler 的 B 站 detail 模式只认 BV 号（`media_platform/bilibili/help.py`），av 链接会报
+`Unable to parse video ID`；Gleaner 交给它之前会把 av 链接和纯 av 号换算成 BV 链接，帖子键仍用 av 号。
+
+### B 站面试录音
+
+`gleaner media`、`gleaner crawl bili --url … --media` 和网页上的“下载音视频”都是一次 detail 运行，
+带 `--get_media yes`。MediaCrawler 把视频存在 `bili/media/<BV 号>/video.mp4`（另有 `cover.jpg`），
+记录里只有 av 号，Gleaner 换算成 BV 号去找视频。实际试过的情况：
+
+- B 站的画面和声音分开下载（DASH），MediaCrawler 用 PATH 上名叫 `ffmpeg` 的程序合成，日志里每合成一个视频有一行
+  `[download] DASH 合流完成`，网页按这一行计数。找不到 ffmpeg 时它退回一个低清晰度的整段文件，可能不完整。
+  Gleaner 会把 `[media] ffmpeg` 所在目录放到子进程 PATH 的最前面；`doctor` 和下载前的检查都会确认文件名叫 `ffmpeg`。
+- 下载很慢：35 分钟的录音下了 15 分钟（CDN 多次返回 HTTP 567 后重试）。下载录音时超时用
+  `[media] download_timeout_seconds`（默认 3600 秒），不用 `timeout_seconds`。
+- 一次给两个长视频时，第一个下载完后第二个报 `Target page, context or browser has been closed`；
+  单独再下载第二个就成功了。Gleaner 在这次运行没拿到全部视频时记为降级并提示单独重试。
 
 ## Gleaner 配置
 
@@ -68,7 +84,14 @@ MediaCrawler 的搜索按整页抓：小于一页的 `max_notes` 会提高到一
 | `login_type` | `qrcode` | `qrcode` / `phone` / `cookie`；CDP 模式复用浏览器的登录状态，一般保持 `qrcode` |
 | `max_notes` | 20 | 搜索时每个关键词抓多少篇，按上表的每页篇数取整；上限 40 |
 | `timeout_seconds` | 900 | 单次运行超时 |
-| `min_interval_minutes` | 5 | 同一平台两次抓取的最小间隔，`--force` 跳过；不同平台互不影响 |
+| `min_interval_minutes` | 5 | 同一平台两次抓取的最小间隔，`--force` 跳过；不同平台互不影响；下载录音也算一次抓取 |
+
+`[media]`（只有 B 站面试录音用到）：
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `ffmpeg` | `ffmpeg` | 命令名或路径（相对 `gleaner.toml`）；文件名必须是 `ffmpeg`，可以是指向别的 ffmpeg 程序的链接 |
+| `download_timeout_seconds` | 3600 | 下载录音时单次运行的超时，至少 300 |
 
 ## 常见问题
 

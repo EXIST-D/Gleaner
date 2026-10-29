@@ -22,6 +22,8 @@ STEP_TITLES = {
     "done": "完成",
 }
 _NOWCODER_TITLES = {"search": "翻阅面经列表"}
+_RECORDING_TITLES = {"search": "读取视频", "download": "下载音视频"}
+_MERGED = "DASH 合流完成"
 _APPS = {"xhs": "小红书", "dy": "抖音", "bili": "哔哩哔哩", "zhihu": "知乎"}
 
 _QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is \d+s", re.IGNORECASE)
@@ -33,16 +35,17 @@ _SEARCHING = re.compile(r"Begin search|Current (?:search )?keyword|search \w+ ke
 _STORED = re.compile(r"update_(?:xhs_note|douyin_aweme|bilibili_video|zhihu_content)\]")
 
 
-def steps_for(platform: str, *, download: bool = True) -> tuple[str, ...]:
-    """The steps a crawl of the platform goes through; only image posts' media is downloaded."""
+def steps_for(platform: str, *, download: bool = True, recordings: bool = False) -> tuple[str, ...]:
+    """The steps a crawl of the platform goes through; only image posts' media and recordings are downloaded."""
     if platform == "nowcoder":
         return ("search", "fetch", *(("download",) if download else ()), "import", "done")
-    with_media = platform in ("xhs", "dy")
+    with_media = recordings or platform in ("xhs", "dy")
     return ("browser", "login", "search", *(("download",) if with_media else ()), "import", "done")
 
 
-def step_titles(platform: str) -> dict[str, str]:
-    return {**STEP_TITLES, **(_NOWCODER_TITLES if platform == "nowcoder" else {})}
+def step_titles(platform: str, *, recordings: bool = False) -> dict[str, str]:
+    extra = _NOWCODER_TITLES if platform == "nowcoder" else _RECORDING_TITLES if recordings else {}
+    return {**STEP_TITLES, **extra}
 
 
 def attention_titles(platform: str) -> dict[str, str]:
@@ -59,6 +62,8 @@ def attention_titles(platform: str) -> dict[str, str]:
 class Progress:
     platform: str = "xhs"
     download: bool = True
+    recordings: bool = False
+    """Downloading whole videos: media counts merged videos instead of single files."""
     steps: tuple[str, ...] = field(init=False)
     step: str = field(init=False)
     attention: str | None = None
@@ -67,7 +72,7 @@ class Progress:
     media: int = 0
 
     def __post_init__(self) -> None:
-        self.steps = steps_for(self.platform, download=self.download)
+        self.steps = steps_for(self.platform, download=self.download, recordings=self.recordings)
         self.step = self.steps[0]
 
     def feed(self, line: str) -> None:
@@ -96,8 +101,9 @@ class Progress:
         elif _STORED.search(line):
             self.notes += 1
             self._advance("search")
-        elif "[download]" in line and "下载完成" in line:
-            self.media += 1
+        elif "[download]" in line and ("下载完成" in line or _MERGED in line):
+            if _MERGED in line or not self.recordings:
+                self.media += 1
             self._advance("download")
 
     def _feed_nowcoder(self, line: str) -> None:
@@ -127,9 +133,10 @@ class Progress:
             self.step = step
 
     def as_dict(self) -> dict:
-        titles = step_titles(self.platform)
+        titles = step_titles(self.platform, recordings=self.recordings)
         return {
             "platform": self.platform,
+            "recordings": self.recordings,
             "steps": [{"name": name, "title": titles[name]} for name in self.steps],
             "step": self.step,
             "step_title": titles[self.step],

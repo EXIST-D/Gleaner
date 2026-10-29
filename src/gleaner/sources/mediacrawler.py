@@ -8,7 +8,10 @@ own checkout. Verified against NanmiCoder/MediaCrawler main as of 2026-10:
 - `--save_data_option jsonl --save_data_path <dir>` writes `<dir>/<data dir>/jsonl/<type>_contents_<date>.jsonl`
   (`adapters/exports.py` lists the data and media directory of each platform).
 - `--get_media yes` downloads post images to `<dir>/<media dir>/media/<post id>/001.jpg …`; for videos it
-  downloads a cover and the whole video.
+  downloads a cover and the whole video. Bilibili serves audio and video separately and MediaCrawler merges
+  them with the `ffmpeg` it finds on PATH (`media_downloader/ffmpeg.py`); without one it falls back to a
+  low-quality stream. Bilibili media lands in `media/<BV ID>/`.
+- Bilibili detail mode only parses BV links (`media_platform/bilibili/help.py`), so av links are converted.
 - Search fetches whole result pages per keyword and raises a smaller `--crawler_max_notes_count` to one page
   (`media_platform/<platform>/core.py: search`): Douyin pages hold 10 posts, the others 20.
 
@@ -28,8 +31,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gleaner.adapters.exports import content_files
-from gleaner.config import MediaCrawlerConfig
+from gleaner.audio import find_ffmpeg
+from gleaner.config import MediaConfig, MediaCrawlerConfig
 from gleaner.sources.base import FetchResult
+from gleaner.urls import bilibili_detail_target
 
 LOG_NAME = "mediacrawler.log"
 MODES = ("search", "detail")
@@ -43,14 +48,22 @@ class CrawlerPlatform:
     page_size: int
     get_media: bool
     """Only image posts need their media: a video would be downloaded whole and Gleaner reads only its text."""
+    recordings: bool = False
+    """Whether selected videos may be downloaded on request, to transcribe interview recordings."""
 
 
 PLATFORMS = {
     "xhs": CrawlerPlatform("xhs", SEARCH_PAGE_SIZE, get_media=True),
     "dy": CrawlerPlatform("dy", 10, get_media=True),
-    "bili": CrawlerPlatform("bili", SEARCH_PAGE_SIZE, get_media=False),
+    "bili": CrawlerPlatform("bili", SEARCH_PAGE_SIZE, get_media=False, recordings=True),
     "zhihu": CrawlerPlatform("zhihu", SEARCH_PAGE_SIZE, get_media=False),
 }
+
+
+def tool_dirs(ffmpeg: str) -> list[Path]:
+    """Directories to put on MediaCrawler's PATH so it finds the configured ffmpeg."""
+    found = find_ffmpeg(ffmpeg)
+    return [Path(found).parent] if found else []
 
 
 def search_notes_per_keyword(max_notes: int, page_size: int = SEARCH_PAGE_SIZE) -> int:
@@ -71,10 +84,13 @@ def build_command(
     keywords: Sequence[str] = (),
     targets: Sequence[str] = (),
     max_notes: int,
+    media: bool = False,
 ) -> list[str]:
     if mode not in MODES:
         raise ValueError(f"unsupported mode: {mode}")
     spec = PLATFORMS[platform]
+    if media and not (spec.recordings and mode == "detail"):
+        raise ValueError(f"{platform} {mode} does not download recordings")
     command = [*config.command, "--platform", spec.code, "--lt", config.login_type, "--type", mode]
     if mode == "search":
         if not keywords:
@@ -83,6 +99,8 @@ def build_command(
     else:
         if not targets:
             raise ValueError("detail mode needs note URLs or IDs")
+        if platform == "bili":
+            targets = [bilibili_detail_target(target) for target in targets]
         command += ["--specified_id", ",".join(targets)]
     return command + [
         "--save_data_option",
@@ -94,7 +112,7 @@ def build_command(
         "--get_sub_comment",
         "no",
         "--get_media",
-        "yes" if spec.get_media else "no",
+        "yes" if spec.get_media or media else "no",
         "--crawler_max_notes_count",
         str(max_notes),
         "--max_concurrency_num",
@@ -110,14 +128,40 @@ class MediaCrawlerDriver:
         *,
         platform: str = "xhs",
         echo: bool = True,
+        media: MediaConfig | None = None,
     ):
+        """With `media`, detail runs also download the videos (Bilibili recordings only)."""
         if platform not in PLATFORMS:
             raise ValueError(f"MediaCrawler does not crawl {platform}")
+        if media is not None and not PLATFORMS[platform].recordings:
+            raise ValueError(f"MediaCrawler recordings are not supported for {platform}")
         self.config = config
         self.platform = platform
-        self.runner = runner or make_runner(echo=echo)
+        self.media = media
+        self.runner = runner or make_runner(echo=echo, path_dirs=tool_dirs(media.ffmpeg) if media else ())
+
+    @property
+    def timeout_seconds(self) -> int:
+        if self.media is None:
+            return self.config.timeout_seconds
+        return max(self.config.timeout_seconds, self.media.download_timeout_seconds)
 
     def problems(self) -> list[str]:
+        found = self._home_problems()
+        if self.media is not None:
+            ffmpeg = find_ffmpeg(self.media.ffmpeg)
+            if ffmpeg is None:
+                found.append(
+                    f"找不到 ffmpeg（{self.media.ffmpeg}）：B 站的音频和画面分开下载，需要它合成；"
+                    "装好后在 gleaner.toml 的 [media] ffmpeg 写上路径"
+                )
+            elif Path(ffmpeg).stem.lower() != "ffmpeg":
+                found.append(
+                    f"MediaCrawler 只认名叫 ffmpeg 的程序，请给 {ffmpeg} 建一个名为 ffmpeg 的链接再配置"
+                )
+        return found
+
+    def _home_problems(self) -> list[str]:
         home = self.config.home
         if home is None:
             return ["没有配置 mediacrawler.home（你本机 MediaCrawler 的目录）"]
@@ -152,17 +196,19 @@ class MediaCrawlerDriver:
             keywords=keywords,
             targets=targets,
             max_notes=max_notes or self.config.max_notes,
+            media=self.media is not None,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / LOG_NAME
+        timeout = self.timeout_seconds
         try:
-            returncode = self.runner(command, self.config.home, self.config.timeout_seconds, log_path)
+            returncode = self.runner(command, self.config.home, timeout, log_path)
         except TimeoutError:
+            cause = "视频下载太慢" if self.media is not None else "可能卡在登录或滑块验证"
             return FetchResult(
                 "degraded",
                 output_dir,
-                f"MediaCrawler 超过 {self.config.timeout_seconds} 秒没有结束，可能卡在登录或滑块验证；"
-                f"已产出的数据仍会导入。日志：{log_path}",
+                f"MediaCrawler 超过 {timeout} 秒没有结束，{cause}；已产出的数据仍会导入。日志：{log_path}",
             )
         except OSError as exc:
             return FetchResult("degraded", output_dir, f"无法启动 MediaCrawler：{exc}")
@@ -190,15 +236,19 @@ def make_runner(
     echo: bool = False,
     on_line: Callable[[str], None] | None = None,
     on_start: Callable[[subprocess.Popen], None] | None = None,
+    path_dirs: Sequence[Path] = (),
 ) -> Runner:
     """Run MediaCrawler, teeing its output to the log file, the terminal (echo) and an optional callback.
 
     on_start receives the process so a caller can terminate it; the run then ends like any failed run.
+    path_dirs go in front of PATH, so MediaCrawler finds tools such as ffmpeg.
     """
 
     def run(command: Sequence[str], cwd: Path, timeout: int, log_path: Path) -> int:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
+        if path_dirs:
+            env["PATH"] = os.pathsep.join([*(str(path) for path in path_dirs), env.get("PATH", "")])
         with (
             log_path.open("w", encoding="utf-8") as log,
             subprocess.Popen(

@@ -26,6 +26,7 @@ from gleaner.pipeline import (
     import_export,
     page_size,
     planned_notes,
+    recordings_to_download,
     screen,
 )
 from gleaner.store import Store
@@ -84,6 +85,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     crawling.add_argument("--force", action="store_true", help="忽略同一平台两次抓取之间的最小间隔")
     crawling.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
+    crawling.add_argument(
+        "--media", action="store_true", help="同时下载视频，用来转写面试录音（只支持 B 站，配合 --url）"
+    )
+
+    media = command("media", cmd_media, "下载 B 站面试录音的音视频，打包时会转成音频交给 Interview Bank 转写")
+    media.add_argument("key", nargs="*", help="帖子键；不写就下载初筛标成录音、还没下载也没打包的视频")
+    media.add_argument("--dry-run", action="store_true", help="只列出要下载的视频")
+    media.add_argument("--force", action="store_true", help="忽略同一平台两次抓取之间的最小间隔")
+    media.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
 
     imported = command(
         "import",
@@ -167,7 +177,9 @@ def cmd_crawl(args) -> int:
     keywords = validate_keywords(args.keyword) or list(config.keywords)
     targets = [value.strip() for value in args.url if value.strip()]
     platform = args.platform
-    fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json))
+    if args.media and not targets:
+        raise GleanerError("--media 要配合 --url 指定视频；按初筛结果下载录音用 gleaner media")
+    fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json), media=args.media)
     if not args.json and not targets:
         planned = planned_notes(
             config, platform=platform, keywords=keywords, targets=targets, max_notes=args.max_notes
@@ -191,6 +203,38 @@ def cmd_crawl(args) -> int:
             max_notes=args.max_notes,
             force=args.force,
             now=utc_now(),
+            media=args.media,
+        )
+    _emit(args, outcome.as_dict(), _summary_text(outcome))
+    return 0 if outcome.status == "ok" else EXIT_DEGRADED
+
+
+def cmd_media(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    with Store.open(config.workspace) as store:
+        records = recordings_to_download(store, args.key or None)
+        if args.dry_run or not records:
+            data = {"ok": True, "posts": [_record_brief(record) for record in records]}
+            text = [_record_line(record) for record in records] or ["没有要下载的录音视频"]
+            return _emit(args, data, text)
+        platforms = {record.post.platform for record in records}
+        if len(platforms) > 1:
+            raise GleanerError("一次只能下载一个平台的视频")
+        platform = platforms.pop()
+        fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json), media=True)
+        if not args.json:
+            print(f"下载 {len(records)} 个视频的音视频，长视频要十几分钟，请耐心等待", file=sys.stderr)
+        outcome = crawl(
+            store,
+            config,
+            fetcher,
+            platform=platform,
+            keywords=[],
+            targets=[record.post.url for record in records],
+            max_notes=None,
+            force=args.force,
+            now=utc_now(),
+            media=True,
         )
     _emit(args, outcome.as_dict(), _summary_text(outcome))
     return 0 if outcome.status == "ok" else EXIT_DEGRADED
@@ -239,6 +283,7 @@ def cmd_show(args) -> int:
         f"链接：{post.url}",
         f"关键词：{'、'.join(post.keywords) or '无'}　标签：{'、'.join(post.tags) or '无'}",
         f"图片：本地 {len(post.images)} 张 / 原帖 {post.remote_image_count} 张　互动：{post.metrics or '无'}",
+        f"音视频：{post.media or '没有下载'}",
         f"初筛理由：{'、'.join(record.label_reasons) or '无'}（{record.label_source or '未初筛'}）",
         "",
         post.body or "（正文为空）",
@@ -263,8 +308,10 @@ def cmd_pack(args) -> int:
         result = build_pack(
             store, config, now=utc_now(), labels=args.label, keys=args.key, limit=args.limit, bank=bank
         )
+    recordings = f"，转写录音 {result.media_posts}" if result.media_posts else ""
     text = [
-        f"素材包 {result.pack_id}：{result.posts} 篇（看图导入 {result.image_posts}，读正文导入 {result.text_posts}）",
+        f"素材包 {result.pack_id}：{result.posts} 篇"
+        f"（看图导入 {result.image_posts}，读正文导入 {result.text_posts}{recordings}）",
         f"位置：{result.path}",
         f"把 {result.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
     ]
@@ -333,6 +380,8 @@ def _summary_text(outcome) -> list[str]:
         f"未变 {summary.unchanged}，跳过 {summary.skipped}",
         f"新帖初筛：{_labels_text(summary.labels)}",
     ]
+    if summary.media:
+        lines.insert(1, f"下载到音视频 {summary.media} 个，打包时会转成音频交给 Interview Bank 转写")
     if outcome.status != "ok":
         lines.append(f"降级：{outcome.message}")
     lines += [f"  {error}" for error in summary.errors[:5]]
@@ -360,6 +409,7 @@ def _record_brief(record: PostRecord) -> dict:
         "label_source": record.label_source,
         "label_reasons": record.label_reasons,
         "images": len(post.images),
+        "media": post.media,
         "packed_in": record.packed_in,
     }
 
@@ -367,8 +417,8 @@ def _record_brief(record: PostRecord) -> dict:
 def _record_line(record: PostRecord) -> str:
     post = record.post
     date = china_date(post.published_at) or "日期未知"
-    packed = "  [已打包]" if record.packed_in else ""
-    return f"{post.key}  {record.label or '未初筛':<10} {date}  {post.kind:<5} {post.title[:40]}{packed}"
+    flags = ("  [有音视频]" if post.media else "") + ("  [已打包]" if record.packed_in else "")
+    return f"{post.key}  {record.label or '未初筛':<10} {date}  {post.kind:<5} {post.title[:40]}{flags}"
 
 
 if __name__ == "__main__":

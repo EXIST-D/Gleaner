@@ -8,7 +8,16 @@ from unittest import mock
 from gleaner.cli import EXIT_DEGRADED, main
 from gleaner.config import WORKSPACE_ENV
 from gleaner.sources.base import FetchResult
-from tests.support import NOWCODER_DISCUSS, WorkspaceTestCase, write_export, write_records
+from tests.support import (
+    BILI_RECORDING,
+    BILI_RECORDING_BVID,
+    BILI_VIDEO,
+    NOWCODER_DISCUSS,
+    WorkspaceTestCase,
+    write_export,
+    write_records,
+    write_video,
+)
 
 
 class CliTest(WorkspaceTestCase):
@@ -86,6 +95,31 @@ class CliTest(WorkspaceTestCase):
         self.assertIn("最多约 5 篇", err)
         self.assertIn("新增 1", out)
         self.assertEqual(self.json("show", "nowcoder:800000001")["post"]["platform"], "nowcoder")
+
+    def test_media_downloads_flagged_recordings(self):
+        self.call("init")
+        source = write_records(self.workspace.parent / "bili-data", "bili", [BILI_VIDEO, BILI_RECORDING])
+        self.json("import", str(source))
+        listed = self.json("media", "--dry-run")
+        self.assertEqual([post["key"] for post in listed["posts"]], ["bili:1150000002"])
+
+        class FakeDownloader:
+            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+                write_records(output_dir, "bili", [BILI_RECORDING], mode="detail")
+                write_video(output_dir, "bili", BILI_RECORDING_BVID)
+                return FetchResult("ok", output_dir)
+
+        with mock.patch("gleaner.cli.fetcher_for", return_value=FakeDownloader()) as factory:
+            code, out, err = self.call("media", "--quiet")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual((factory.call_args.args[1], factory.call_args.kwargs["media"]), ("bili", True))
+        self.assertIn("下载到音视频 1 个", out)
+        self.assertTrue(self.json("show", "bili:1150000002")["post"]["media"])
+        self.assertIn("没有要下载", self.call("media")[1])
+
+        code, _, err = self.call("crawl", "bili", "--media")
+        self.assertEqual(code, 1)
+        self.assertIn("--url", err)
 
     def test_crawl_rejects_bad_arguments(self):
         self.call("init")
