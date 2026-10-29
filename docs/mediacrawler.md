@@ -49,7 +49,7 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 | 平台 | `--get_media` | 搜索每页 | 数据目录 / 图片目录 | 说明 |
 |---|---|---|---|---|
 | 小红书 | `yes` | 20 | `xhs/` / `xhs/media/` | 很多面经的题只在图片里；视频帖会下载封面和视频，Gleaner 只用正文 |
-| 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频，Gleaner 只用文案 |
+| 抖音 | `yes` | 10 | `douyin/` / `dy/media/` | 图集下载全部图片；视频帖 MediaCrawler 会下载封面和整段视频（一条几十 MB），Gleaner 只用文案；MediaCrawler 给图集的链接也是 `/video/<ID>`，Gleaner 把 `/note/<ID>` 认作同一篇 |
 | B 站 | `no` | 20 | `bili/` | 只有标题和简介（MediaCrawler 截到 500 字；空简介是 `-`）；真实面试录音的题都在声音里，简介很少列题 |
 | 知乎 | `no` | 20 | `zhihu/` | 回答、文章的纯文字正文（标签已去掉，段落会连在一起；`&#34;` 这类实体由 Gleaner 解码）；视频只有标题和简介，其他类型会跳过；作者昵称被 MediaCrawler 打码 |
 

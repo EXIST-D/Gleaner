@@ -55,6 +55,17 @@ class ScreenerTest(unittest.TestCase):
         self.assertEqual(verdict.label, "promo")
         self.assertIn("promo:无偿领取", verdict.reasons)
 
+    def test_pinyin_dodge_for_comment_bait_is_promo(self):
+        body = "后来我问他上下文窗口满了怎么办。想系统梳理，可以在溜个“Agent”，我把学习清单fa你一份。"
+        self.assertEqual(self.label("面了个候选人，聊到 Agent", body), "promo")
+
+    def test_topic_tags_are_not_body_text(self):
+        caption = "用户密码怎么存到数据库里？ #java #java面试 #后端开发 #面经 #互联网大厂"
+        verdict = self.screener.screen(post(caption, caption))
+        self.assertEqual(verdict.label, "unclear")
+        self.assertIn("too-little-content", verdict.reasons)
+        self.assertEqual(self.label("示例公司后端一面：登录凭证怎么设计？", "#Java #后端面试"), "candidate")
+
     def test_question_collection_without_an_interview_event(self):
         self.assertEqual(self.label("Redis 高频题合集", "八股必背", images=2), "collection")
 

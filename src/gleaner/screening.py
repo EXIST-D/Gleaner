@@ -67,6 +67,7 @@ PROMO_TERMS = (
     "无偿领取",
     "免费领取",
     "下方小卡片",
+    "fa你",
 )
 STRONG_PROMO_TERMS = (
     "陪跑",
@@ -84,6 +85,7 @@ STRONG_PROMO_TERMS = (
     "无偿领取",
     "免费领取",
     "下方小卡片",
+    "fa你",
 )
 COLLECTION_TERMS = (
     "合集",
@@ -99,6 +101,8 @@ COLLECTION_TERMS = (
 )
 
 MIN_BODY_CHARS = 40
+# Douyin and Xiaohongshu captions trail a row of topics that would pass for body text.
+HASHTAG = re.compile(r"#[^\s#]+#?")
 
 # An AI-conducted round (“卓望ai面”); “AI面试题” is a topic, not a round, so 面 must not start 面试.
 AI_ROUND = re.compile(r"ai ?面(?!试)")
@@ -174,7 +178,8 @@ class Screener:
             return Verdict("irrelevant", ("no-interview-terms",))
         if collection and not event:
             return Verdict("collection", tuple([*(f"collection:{t}" for t in collection), *evidence]))
-        has_material = bool(post.images) or post.remote_image_count > 0 or len(post.body) >= MIN_BODY_CHARS
+        has_text = len(HASHTAG.sub("", post.body).strip()) >= MIN_BODY_CHARS
+        has_material = bool(post.images) or post.remote_image_count > 0 or has_text
         if event or has_material:
             return Verdict("candidate", tuple(evidence + [f"promo:{t}" for t in promo]))
         return Verdict("unclear", tuple([*evidence, "too-little-content"]))
