@@ -177,7 +177,8 @@ NOWCODER_MOMENT = {
     "source_keywords": ["Java 一面"],
     "detail": {
         "title": "虚构公司 Java 一面",
-        "content": '问了 List&lt;String&gt; 的泛型擦除<br/>还有线程池<img data-card-emoji="1" src="https://x/e.png">',
+        "content": '问了 List&lt;String&gt; 的泛型擦除<br/>还有线程池<img data-card-emoji="1" src="https://x/e.png">'
+        '<a href="/creation/subject/0" target="_blank" class="subject">#秋招面试记录#</a>',
         "imgMoment": [{"src": "https://uploadfiles.nowcoder.com/images/m1.jpg"}],
         "createdAt": 1792627200000,
     },

@@ -79,6 +79,9 @@ COLLECTION_TERMS = (
 
 MIN_BODY_CHARS = 40
 
+# An AI-conducted round (“卓望ai面”); “AI面试题” is a topic, not a round, so 面 must not start 面试.
+AI_ROUND = re.compile(r"ai ?面(?!试)")
+
 # SEO spam pads posts with lists of unrelated domains; real accounts link a few well-known sites at most.
 MIN_SPAM_DOMAINS = 5
 DOMAIN = re.compile(
@@ -134,7 +137,7 @@ class Screener:
     def screen(self, post: Post) -> Verdict:
         text = "\n".join([post.title, post.body, *post.tags]).lower()
         interview = _hits(text, self.interview)
-        event = _hits(text, self.event)
+        event = _hits(text, self.event) + (["ai面"] if AI_ROUND.search(text) else [])
         promo = _hits(text, self.promo)
         strong = _hits(text, self.strong_promo)
         collection = _hits(text, self.collection)

@@ -366,8 +366,8 @@ class _Run:
                     if len(found[keyword]) < per_keyword and matches(keyword, text):
                         found[keyword].append(pick.post_id)
                         picks.setdefault(pick.post_id, pick).keywords.append(keyword)
-            hits = sum(len(ids) for ids in found.values())
-            self.log(f"[nowcoder] 第 {page} 页 {len(records)} 篇，累计命中关键词 {hits} 篇")
+            counts = "、".join(f"{keyword} {len(ids)}" for keyword, ids in found.items())
+            self.log(f"[nowcoder] 第 {page} 页 {len(records)} 篇，累计命中 {len(picks)} 篇（{counts}）")
             if all(len(ids) >= per_keyword for ids in found.values()) or len(records) < LIST_PAGE_SIZE:
                 break
         return list(picks.values())

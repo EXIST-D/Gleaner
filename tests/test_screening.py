@@ -60,6 +60,15 @@ class ScreenerTest(unittest.TestCase):
     def test_too_little_content_is_unclear(self):
         self.assertEqual(self.label("面经", "求"), "unclear")
 
+    def test_an_ai_conducted_round_is_an_interview_event(self):
+        verdict = self.screener.screen(
+            post("示例科技ai面", "1. 泛型是什么？什么是类型擦除？\n2. JVM 垃圾回收的流程？")
+        )
+        self.assertEqual(verdict.label, "candidate")
+        self.assertIn("event:ai面", verdict.reasons)
+        self.assertEqual(self.label("示例科技 AI 面", "问了 Redis"), "candidate")
+        self.assertEqual(self.label("AI面试题合集", "高频题", images=2), "collection")
+
     def test_seo_domain_padding_is_promo(self):
         spam = "\n".join(f"site{index}-demo.com.cn" for index in range(6))
         verdict = self.screener.screen(

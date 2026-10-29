@@ -45,6 +45,7 @@ _BLOCKS = {
 _EMOJI_ATTRS = {"data-card-emoji", "data-card-nowcoder"}
 _SPACES = re.compile(r"[ \t\r\n\f\u00a0]+")
 _IMAGE_TAG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+_LINK_TAG = re.compile(r"</?a\b[^>]*>", re.IGNORECASE)
 _BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
@@ -99,8 +100,9 @@ def content_images(html: str) -> list[str]:
 
 
 def moment_text(content: str) -> str:
-    """Moments are plain text, so `List<String>` stays as written; only inline images and breaks are tags."""
-    text = _BREAK.sub("\n", _IMAGE_TAG.sub("", content))
+    """Moments are plain text, so `List<String>` stays as written; only inline images, topic links and breaks
+    are tags (a link keeps its text, e.g. #秋招面试记录#)."""
+    text = _BREAK.sub("\n", _LINK_TAG.sub("", _IMAGE_TAG.sub("", content)))
     lines = [line.rstrip() for line in unescape(text).splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 

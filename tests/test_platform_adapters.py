@@ -105,7 +105,7 @@ class PlatformAdapterTest(WorkspaceTestCase):
             discuss.metrics, {"liked_count": 7, "collected_count": 4, "comment_count": 2, "view_count": 300}
         )
         moment = posts["nowcoder:0123456789abcdef0123456789abcdef"]
-        self.assertEqual(moment.body, "问了 List<String> 的泛型擦除\n还有线程池")
+        self.assertEqual(moment.body, "问了 List<String> 的泛型擦除\n还有线程池#秋招面试记录#")
         self.assertEqual(
             moment.url, "https://www.nowcoder.com/feed/main/detail/0123456789abcdef0123456789abcdef"
         )

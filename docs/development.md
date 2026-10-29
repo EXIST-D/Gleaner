@@ -21,7 +21,7 @@ git config user.name EXIST-D
 git config user.email 72126689+EXIST-D@users.noreply.github.com
 ```
 
-然后跑一遍完整检查（见第 4 节），151 个测试全过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
+然后跑一遍完整检查（见第 4 节），152 个测试全过就说明环境没问题。测试只用合成数据，不需要 MediaCrawler、
 Interview Bank 或网络。
 
 Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/bin/` 换掉即可；提交钩子由 Git for Windows 自带的 sh 执行。
@@ -78,7 +78,7 @@ git pull --rebase                         # 先同步另一台电脑推上来的
   && node --check src/gleaner/web/static/app.js \
   && .venv/bin/python -B -X utf8 -m unittest discover -s tests -t .
 
-git add -A && git commit -m "GLN-12: <英文的一句话说明>"
+git add -A && git commit -m "GLN-13: <英文的一句话说明>"
 git push
 ```
 
@@ -117,7 +117,7 @@ git push
 
 ## 7. 当前状态
 
-版本 0.1.0，提交到 GLN-11，下一个编号 **GLN-12**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
+版本 0.1.0，提交到 GLN-12，下一个编号 **GLN-13**。各次提交做了什么见 `git log` 和 [CHANGELOG](../CHANGELOG.md)。
 
 已经能用：
 
