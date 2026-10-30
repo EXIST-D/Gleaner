@@ -142,10 +142,14 @@ schtasks /Create /SC DAILY /ST 09:30 /TN Gleaner /TR "cmd /c cd /d C:\path\to\Gl
 
 ```bash
 gleaner bundle                                          # 生成 workspace/bundles/questions-<时间>.json
-python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包> --dry-run   # 先看报告，不写任何东西
-python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包>             # 暂存，并生成去重用的 review sheet
+python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包> --dry-run --fill-event-date month   # 先看报告，不写任何东西
+python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包> --fill-event-date month   # 暂存，并生成去重用的 review sheet
 python3 <ibank.py> ingest finalize --task <任务编号> --decisions <决定文件> --defer-review
 ```
+
+**时间**：帖子里很少写面试日期（采集题库里只有约 3% 的出现有），所以加 `--fill-event-date month`：没有面试日期的出现，
+用帖子的发布日期（精确到月）顶上，这样每道题都能按时间归档；它是近似值，面试一般发生在发布前几天到几周，
+精确的发布日期仍然留在来源上。不加这个参数，导入的题就没有时间。`year`、`day` 可以换精度。
 
 导进去的是**新题**，不会自己合并：和目标题库里已有的题相同、相近的，在 review sheet 里逐个判断（合并会让那道题多一次出现，
 抬高它的频次）。同一个题目包导两次，第二次什么也不加。目标是线上的题库时，先备份，先在备份恢复出来的副本上试一遍，
