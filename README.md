@@ -269,6 +269,8 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | `label <key> <label>` | 人工改标签，以后的初筛不会覆盖 |
 | `pack` | 打包（默认只打 `candidate` 且没打过包的帖子；还没下载的录音先留着） |
 | `imports` | 对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；手工导入的帖子顺便记下；`--dry-run` 只列出 |
+| `skip-import <key…>` | 记下不打算导入题库的帖子（已打过包的也行）：不再算「还在等导入」 |
+| `glossary` | 列出转写录音时常被听错的术语（内置的加上 `[glossary] extra`）；有录音的素材包的 HANDOFF.md 里也附这张表 |
 | `mark-imported <key…>` | 记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音 |
 | `web` | 打开本机网页控制台（`--port` 换端口，`--no-open` 不自动打开浏览器） |
 | `stats` / `runs` | 统计与抓取记录 |

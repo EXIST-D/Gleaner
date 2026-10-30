@@ -29,7 +29,7 @@ from gleaner.config import MAX_NOTES_CAP, Config, load_config
 from gleaner.devnotes import add_feedback, dev_status
 from gleaner.errors import GleanerError
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import build_pack, packable
+from gleaner.packer import OUTSIDE_PACKS, build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     default_max_notes,
@@ -453,6 +453,8 @@ class WebApp:
 
     def packs(self, _query: dict) -> dict:
         held = self._held()
+        with Store.open(self.workspace) as store:
+            settled = {r.post.key for r in store.posts(packed=True) if r.packed_in in OUTSIDE_PACKS}
         found = []
         for manifest_path in sorted((self.workspace / "packs").glob("pack-*/manifest.json"), reverse=True):
             try:
@@ -470,7 +472,9 @@ class WebApp:
                     "media_posts": sum(entry.get("intake") == "media" for entry in entries),
                     "imported": None
                     if held is None
-                    else sum(entry.get("source_url") in held for entry in entries),
+                    else sum(
+                        entry.get("source_url") in held or entry.get("key") in settled for entry in entries
+                    ),
                     "titles": [entry.get("title", "") for entry in entries[:4]],
                 }
             )

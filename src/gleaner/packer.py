@@ -12,6 +12,7 @@ from gleaner.audio import AUDIO_NAME, Extractor, ffmpeg_extractor
 from gleaner.bodytext import MIN_LISTED_QUESTIONS, choose_intake, listed_questions
 from gleaner.config import Config
 from gleaner.errors import GleanerError
+from gleaner.glossary import entries, render_table
 from gleaner.models import PLATFORMS, PostRecord
 from gleaner.sources.mediacrawler import awaiting_download
 from gleaner.store import Store
@@ -22,6 +23,9 @@ PACK_SCHEMA_VERSION = 1
 DEFAULT_LIMIT = 20
 MANUAL_IMPORT = "手工导入"
 """`packed_in` of a post imported into the bank without a pack: it is never packed or downloaded again."""
+NOT_IMPORTING = "不导入"
+"""`packed_in` of a post the user decided not to import (even if it was packed): it no longer counts as waiting."""
+OUTSIDE_PACKS = (MANUAL_IMPORT, NOT_IMPORTING)
 
 
 @dataclass(frozen=True)
@@ -239,11 +243,21 @@ def render_handoff(manifest: dict, pack_dir: Path, config: Config, bank: Path | 
         out += [
             "7. 录音帖（`intake` 为 `media`）的 `audio.flac` 是 Gleaner 从 B 站视频提取的单声道音频，做过响度均衡"
             "（远程面试录的是候选人这边，面试官声音往往很小）；`body.txt` 只用来确认公司、岗位和轮次。",
-            "8. 转写文本不可靠，专业词常被听错（例如 Redis 写成 Lilis，幂等写成密等，线程写成县城）。"
+            "8. 转写文本不可靠，专业词常被听错（例如 Redis 写成 Lilis，幂等写成密等，线程写成县城，"
+            "完整的对照见下面的「转写常见误识别」）。"
             "每道题按上下文改成正确的说法再写进 `original_text`，并在 `correction` 里写明改了什么。",
             "9. 面试官的话可能没有转写出来：只有候选人的回答能清楚看出问的是什么时才补出这道题，"
             "这时调低置信度，并在 `correction` 里说明题目是从回答推断的。",
             "10. 候选人的姓名、学校、公司等个人信息不要写进元数据；自我介绍、项目经历介绍和反问不收。",
+        ]
+    if media_posts:
+        out += [
+            "",
+            "## 转写常见误识别",
+            "",
+            "下表来自已导入的录音，只是提醒：写“看上下文”的要对照前后文再改，表里没有的词也要自己判断。",
+            "",
+            *render_table(entries(config.glossary.extra)),
         ]
     out += ["", "## 命令", ""]
     if image_posts:

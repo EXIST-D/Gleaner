@@ -219,6 +219,13 @@ class BankPageTest(WorkspaceTestCase):
         _, data = self.get("/api/packs")
         (pack,) = data["packs"]
         self.assertEqual((pack["posts"], pack["imported"]), (2, 1))
+        with Store.open(self.ws) as store:
+            from gleaner.packer import NOT_IMPORTING
+
+            store.mark_packed(["xhs:cc03"], pack_id=NOT_IMPORTING, now="2026-10-27T00:00:00+00:00")
+        self.assertEqual(
+            self.get("/api/packs")[1]["packs"][0]["imported"], 2, "a post not to be imported is settled"
+        )
         self.ibank.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
         self.app._bank = None
         self.assertIsNone(

@@ -7,6 +7,7 @@ from importlib import resources
 from pathlib import Path
 
 from gleaner.errors import GleanerError
+from gleaner.glossary import Entry, parse_extra
 
 CONFIG_NAME = "gleaner.toml"
 WORKSPACE_ENV = "GLEANER_HOME"
@@ -66,6 +67,13 @@ class AutoConfig:
 
 
 @dataclass(frozen=True)
+class GlossaryConfig:
+    """Misrecognised terms of your own, added to the built-in list in HANDOFF.md."""
+
+    extra: tuple[Entry, ...] = ()
+
+
+@dataclass(frozen=True)
 class HandoffConfig:
     bank: Path | None = None
     ibank: Path | None = None
@@ -88,6 +96,7 @@ class Config:
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
     auto: AutoConfig = field(default_factory=AutoConfig)
+    glossary: GlossaryConfig = field(default_factory=GlossaryConfig)
     handoff: HandoffConfig = field(default_factory=HandoffConfig)
 
 
@@ -119,6 +128,7 @@ def parse_config(data: dict, workspace: Path) -> Config:
     screening = _table(data, "screening")
     media = _table(data, "media")
     auto = _table(data, "auto")
+    glossary = _table(data, "glossary")
     handoff = _table(data, "handoff")
 
     max_notes = _int(crawler, "max_notes", 20, "mediacrawler.max_notes")
@@ -187,6 +197,7 @@ def parse_config(data: dict, workspace: Path) -> Config:
             platforms=tuple(dict.fromkeys(_strings(auto, "platforms", [], "auto.platforms"))),
             max_recordings=max_recordings,
         ),
+        glossary=GlossaryConfig(extra=parse_extra(_strings(glossary, "extra", [], "glossary.extra"))),
         handoff=HandoffConfig(
             bank=_path(handoff.get("bank"), workspace),
             ibank=_path(handoff.get("ibank"), workspace),

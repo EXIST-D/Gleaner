@@ -19,10 +19,11 @@ from gleaner.config import (
     validate_keywords,
 )
 from gleaner.errors import GleanerError
+from gleaner.glossary import entries as glossary_entries
 from gleaner.imports import sync_imports
 from gleaner.installer import PARTS, Installer, make_run
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import DEFAULT_LIMIT, MANUAL_IMPORT, build_pack, packable
+from gleaner.packer import DEFAULT_LIMIT, MANUAL_IMPORT, NOT_IMPORTING, build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     crawl,
@@ -180,6 +181,19 @@ def build_parser() -> argparse.ArgumentParser:
         "记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音",
     )
     imported_by_hand.add_argument("key", nargs="+", help="帖子键，可以写多个")
+
+    command(
+        "glossary",
+        cmd_glossary,
+        "列出转写录音时常被听错的术语（内置的加上 gleaner.toml 里 [glossary] extra 的）",
+    )
+
+    skipped = command(
+        "skip-import",
+        cmd_skip_import,
+        "记下不打算导入题库的帖子（已经打过包的也可以）：不再算「还在等导入」",
+    )
+    skipped.add_argument("key", nargs="+", help="帖子键，可以写多个")
 
     web = command("web", cmd_web, "打开本机网页控制台：概览、可视化抓取、看帖改标签、打包")
     web.add_argument("--port", type=int, default=8765, help="端口，默认 8765；只监听 127.0.0.1")
@@ -502,6 +516,27 @@ def cmd_mark_imported(args) -> int:
     if skipped:
         text.append(f"{len(skipped)} 篇本来就打过包，没改：{'、'.join(skipped)}")
     return _emit(args, {"ok": True, "marked": fresh, "unchanged": skipped}, text)
+
+
+def cmd_glossary(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    items = glossary_entries(config.glossary.extra)
+    data = {"ok": True, "entries": [item.__dict__ for item in items]}
+    text = [f"{item.heard} → {item.correct}" + (f"（{item.note}）" if item.note else "") for item in items]
+    return _emit(args, data, text)
+
+
+def cmd_skip_import(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    with Store.open(config.workspace) as store:
+        records = store.posts(keys=args.key)
+        missing = sorted(set(args.key) - {record.post.key for record in records})
+        if missing:
+            raise GleanerError(f"找不到帖子：{', '.join(missing)}")
+        changed = [record.post.key for record in records if record.packed_in != NOT_IMPORTING]
+        store.mark_packed(changed, pack_id=NOT_IMPORTING, now=iso(utc_now()))
+    text = [f"已记下 {len(changed)} 篇为{NOT_IMPORTING}：{'、'.join(changed) or '无'}"]
+    return _emit(args, {"ok": True, "marked": changed}, text)
 
 
 def cmd_web(args) -> int:

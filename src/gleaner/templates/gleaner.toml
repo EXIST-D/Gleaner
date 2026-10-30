@@ -60,6 +60,11 @@ platforms = []
 # 每次最多下载几个 B 站面试录音（长视频下载要十几分钟）；0 表示不自动下载
 max_recordings = 2
 
+# 转写录音时专业词常被听错：内置了一份常见误识别（`gleaner glossary` 查看），会写进素材包的 HANDOFF.md
+[glossary]
+# 追加自己的，每项写成 "听成的写法 = 正确写法"
+extra = []
+
 [handoff]
 # 独立的采集题库目录（不要用个人题库）。首次使用前运行：python3 <ibank.py> init --bank <目录>
 # 默认对应仓库根目录下的 collected-bank/（已被 git 忽略）

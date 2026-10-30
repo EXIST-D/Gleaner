@@ -7,7 +7,7 @@ from gleaner.bank import BankReader, Held
 from gleaner.cli import main
 from gleaner.errors import GleanerError
 from gleaner.imports import sync_imports
-from gleaner.packer import MANUAL_IMPORT, build_pack
+from gleaner.packer import MANUAL_IMPORT, NOT_IMPORTING, build_pack
 from gleaner.pipeline import import_export
 from gleaner.store import Store
 from tests.support import (
@@ -147,6 +147,26 @@ class SyncTest(BankWithSources):
         self.assertEqual((report["adopted"], report["waiting"], report["holding"]), (["xhs:cc03"], {}, 2))
         with Store.open(self.workspace) as store:
             self.assertEqual(store.get("xhs:cc03").packed_in, MANUAL_IMPORT)
+
+    def test_posts_not_to_be_imported_stop_counting_as_waiting(self):
+        with Store.open(self.workspace) as store:
+            pack = build_pack(store, self.config, now=NOW).pack_id
+            self.assertEqual(len(sync_imports(store, {}, now=NOW, adopt=False).waiting[pack]), 2)
+        report = self.run_cli("skip-import", "xhs:aa01")
+        self.assertEqual(report["marked"], ["xhs:aa01"])
+        self.assertEqual(self.run_cli("skip-import", "xhs:aa01")["marked"], [], "already recorded")
+        with Store.open(self.workspace) as store:
+            self.assertEqual(store.get("xhs:aa01").packed_in, NOT_IMPORTING)
+            after = sync_imports(store, {}, now=NOW, adopt=False)
+        self.assertEqual(after.waiting, {pack: ["xhs:cc03"]})
+        self.assertEqual(after.pack_sizes, {pack: 1})
+
+    def test_skip_import_needs_known_posts(self):
+        import contextlib
+        import io
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["--workspace", str(self.workspace), "skip-import", "xhs:nothing"]), 1)
 
     def run_cli(self, *argv):
         import contextlib
