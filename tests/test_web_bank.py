@@ -23,6 +23,7 @@ QUESTIONS = [
         "companies": [
             {"id": "company_a", "name": "示例科技", "frequency": 1},
             {"id": "company_b", "name": "虚构公司", "frequency": 1},
+            {"id": None, "name": "unknown", "frequency": 1},
         ],
         "occurrences": [
             {

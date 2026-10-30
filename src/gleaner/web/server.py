@@ -342,7 +342,11 @@ class WebApp:
             "unpacked_candidates": unpacked,
             "labels": [{"id": label, "title": LABEL_TITLES[label]} for label in LABELS],
             "checkpoints": [
-                {"keyword": item["keyword"], "latest": china_date(item["latest_published_at"])}
+                {
+                    "keyword": item["keyword"],
+                    "platform": _platform_label(platform_of(item["source"]) or ""),
+                    "latest": china_date(item["latest_published_at"]),
+                }
                 for item in checkpoints
             ],
             "runs": [
@@ -618,7 +622,9 @@ def _question_brief(row: dict, labels: dict[str, dict]) -> dict:
         "canonical": row.get("canonical", ""),
         "frequency": row.get("frequency", len(occurrences)),
         "companies": [
-            company["name"] if isinstance(company, dict) else str(company) for company in companies
+            company["name"]
+            for company in companies
+            if isinstance(company, dict) and company.get("id") and company.get("name")
         ],
         "topic": topic,
         "topic_title": topic_title,

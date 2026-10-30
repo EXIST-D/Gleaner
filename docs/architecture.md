@@ -97,6 +97,7 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 **题库页面只通过 Interview Bank 的公开命令读取。** Gleaner 不直接解析题库的 JSONL，这样题库升级格式、
 加锁或校验规则变化时，页面不会读到半写入的数据，也不需要跟着改。题目列表按 `data/` 下文件的修改时间缓存；
 来源截图只按“64 位哈希 + 图片后缀”的文件名从题库 `media/` 目录提供。
+Interview Bank 认不出公司时记成 `id` 为空的 `unknown`，列表不把它当公司；出现记录按 `source_type` 标出正文、截图或录音转写。
 导出同样交给 `ibank.py export`，报告只写进题库的 `exports/`（Interview Bank 自己也只允许这里）；
 预览和下载只接受该目录下的 `.md` 文件名，不接受路径。前端的 Markdown 渲染只覆盖导出会用到的语法，
 内容先转义再加标签，只认 `<details><summary>` 这一种 HTML。

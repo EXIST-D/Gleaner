@@ -130,6 +130,8 @@ class WebAppTest(WorkspaceTestCase):
         self.assertEqual(data["stats"]["platforms"], {"xhs": 4})
         self.assertTrue(any(check["name"] == "mediacrawler" and check["ok"] for check in data["checks"]))
         self.assertEqual((data["runs"][0]["mode"], data["runs"][0]["platform"]), ("import", "小红书"))
+        self.assertTrue(data["checkpoints"])
+        self.assertEqual({item["platform"] for item in data["checkpoints"]}, {"小红书"})
 
     def test_posts_filters_counts_and_intake(self):
         _, data = self.get("/api/posts?label=candidate&packed=no")

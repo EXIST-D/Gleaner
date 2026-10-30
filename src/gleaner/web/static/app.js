@@ -197,7 +197,7 @@ async function renderOverview() {
           <h2>关键词进度 <small>每个关键词抓到的最新发布日期</small></h2>
           <div class="list">
             ${o.checkpoints.length ? o.checkpoints.map((c) => `
-              <div class="list-row"><div class="grow title">${esc(c.keyword)}</div><span class="pill">${esc(c.latest)}</span></div>
+              <div class="list-row"><div class="grow title">${platformBadge(c.platform)}${esc(c.keyword)}</div><span class="pill">${esc(c.latest)}</span></div>
             `).join("") : `<div class="empty">抓取后会显示在这里</div>`}
           </div>
         </div>
@@ -1141,11 +1141,14 @@ function shortAnswerHtml(text) {
   return `<ul class="short-answer">${lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`;
 }
 
+const SOURCE_TYPES = { image: "截图", audio: "录音转写", video: "视频转写", subtitle: "字幕" };
+
 function occurrenceCard(o) {
   const meta = [o.company, o.round, o.interview_type, o.event_date ? `面试 ${o.event_date}` : o.source_date ? `发布 ${o.source_date}` : ""].filter(Boolean);
+  const kind = [o.platform, SOURCE_TYPES[o.source_type] || "正文"].filter(Boolean).join(" · ");
   return `
     <div class="occurrence">
-      <div class="occ-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}<span class="faint">${esc(o.source_type === "image" ? "截图" : "正文")}</span></div>
+      <div class="occ-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}<span class="faint">${esc(kind)}</span></div>
       ${o.follow_up_of ? `<button class="follow-up" data-action="open-question" data-id="${esc(o.follow_up_of.id)}">追问自：${esc(o.follow_up_of.text)}</button>` : ""}
       <blockquote>${esc(o.original_text)}</blockquote>
       ${o.image ? `<a class="occ-image" href="${esc(o.image)}" target="_blank" rel="noopener"><img src="${esc(o.image)}" alt="题目所在的截图" loading="lazy"></a>` : ""}
