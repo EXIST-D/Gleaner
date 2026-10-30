@@ -83,7 +83,18 @@ class CliTest(WorkspaceTestCase):
         self.call("init")
 
         class FakeFetcher:
-            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+            def run(
+                self,
+                *,
+                mode,
+                output_dir,
+                log_dir,
+                keywords=(),
+                targets=(),
+                max_notes=None,
+                since=None,
+                known=(),
+            ):
                 write_records(output_dir, "nowcoder", [NOWCODER_DISCUSS])
                 return FetchResult("ok", output_dir)
 
@@ -94,7 +105,19 @@ class CliTest(WorkspaceTestCase):
         self.assertIn("翻阅最新面经列表", err)
         self.assertIn("最多约 5 篇", err)
         self.assertIn("新增 1", out)
+        self.assertIn("不限发布时间", err)
         self.assertEqual(self.json("show", "nowcoder:800000001")["post"]["platform"], "nowcoder")
+
+        with mock.patch("gleaner.cli.fetcher_for", return_value=FakeFetcher()):
+            _, _, err = self.call("crawl", "nowcoder", "--keyword", "后端 面经", "--force")
+            self.assertIn("增量：跳过已保存的帖子", err)
+            _, _, err = self.call("crawl", "nowcoder", "--keyword", "后端 面经", "--force", "--full")
+            self.assertIn("不限发布时间", err)
+
+    def test_setup_rejects_unknown_parts(self):
+        code, _, err = self.call("setup", "chrome")
+        self.assertEqual(code, 1)
+        self.assertIn("mediacrawler / bank / media", err)
 
     def test_media_downloads_flagged_recordings(self):
         self.call("init")
@@ -104,7 +127,18 @@ class CliTest(WorkspaceTestCase):
         self.assertEqual([post["key"] for post in listed["posts"]], ["bili:1150000002"])
 
         class FakeDownloader:
-            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+            def run(
+                self,
+                *,
+                mode,
+                output_dir,
+                log_dir,
+                keywords=(),
+                targets=(),
+                max_notes=None,
+                since=None,
+                known=(),
+            ):
                 write_records(output_dir, "bili", [BILI_RECORDING], mode="detail")
                 write_video(output_dir, "bili", BILI_RECORDING_BVID)
                 return FetchResult("ok", output_dir)

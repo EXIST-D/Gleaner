@@ -1,0 +1,26 @@
+diff --git a/config/base_config.py b/config/base_config.py
+index cf6823c..f0aa3c2 100644
+--- a/config/base_config.py
++++ b/config/base_config.py
+@@ -80,7 +80,7 @@ BROWSER_LAUNCH_TIMEOUT = 60
+ # 用户需要在 Chrome 中开启远程调试：chrome://inspect/#remote-debugging
+ # 或者使用命令行参数启动 Chrome：--remote-debugging-port=9222
+ # 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
+-CDP_CONNECT_EXISTING = True
++CDP_CONNECT_EXISTING = False
+ 
+ # 程序结束时是否自动关闭浏览器
+ # 设置为 False 可以保持浏览器运行，方便调试
+diff --git a/config/xhs_config.py b/config/xhs_config.py
+index d9217ff..11c3205 100644
+--- a/config/xhs_config.py
++++ b/config/xhs_config.py
+@@ -21,7 +21,7 @@
+ # Xiaohongshu platform configuration
+ 
+ # Sorting method, the specific enumeration value is in media_platform/xhs/field.py
+-SORT_TYPE = "popularity_descending"
++SORT_TYPE = "time_descending"
+ 
+ # Specify the note URL list, which must carry the xsec_token parameter
+ XHS_SPECIFIED_NOTE_URL_LIST = [

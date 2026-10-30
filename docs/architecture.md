@@ -6,20 +6,22 @@
 |---|---|
 | `cli.py` | 命令行入口；预期内的错误打印一行中文提示，`--json` 输出机器可读结果 |
 | `config.py` | 读取并校验 `gleaner.toml`；模板在 `templates/gleaner.toml` |
-| `sources/base.py` | `Fetcher` 接口（`problems()`、`run()`）与 `FetchResult` |
-| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体、B 站 av 链接换成 BV 链接）、运行子进程（可把 ffmpeg 所在目录放进 PATH）、记录日志、把失败归为“降级” |
-| `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；限速、重试、识别拦截 |
+| `installer.py` | `gleaner setup`：下载 MediaCrawler 并固定版本、检查和打补丁、`uv sync`；下载 Interview Bank、建采集题库；装 faster-whisper、ffmpeg 链接和转写模型；把路径写回 `gleaner.toml`（逐行改，保留注释） |
+| `patches/mediacrawler/` | 对 MediaCrawler 的补丁和 `NOTICE`（按 MediaCrawler 的许可证，不按 MIT），随包分发 |
+| `sources/base.py` | `Fetcher` 接口（`problems()`、`run()`）与 `FetchResult`；`run()` 接受增量搜索的 `since` 和已保存的帖子 ID `known` |
+| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体、B 站 av 链接换成 BV 链接）、把增量搜索的发布时间范围换成补丁读的环境变量、运行子进程（可把 ffmpeg 所在目录放进 PATH）、记录日志、把失败归为“降级” |
+| `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；增量时跳过已保存的帖子、翻到旧帖就停；限速、重试、识别拦截 |
 | `adapters/exports.py` | 各平台导出的数据目录与图片目录对照；读取运行目录里的全部帖子；复制外部导出目录 |
 | `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片和视频、解析“1.2万”这类计数、话题标签 |
 | `adapters/<平台>.py` | `xhs`、`douyin`、`bilibili`、`zhihu`、`nowcoder`：把一条原始记录转成 `Post` |
 | `urls.py` | 各平台的稳定链接、去掉会话和分享参数、从链接反查帖子键；B 站 av 号和 BV 号互转 |
 | `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本和逐版升级 |
 | `screening.py` | 可解释的规则初筛；标出 B 站面试录音 |
-| `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数和抓取间隔；挑出要下载的录音 |
+| `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数、抓取间隔和增量搜索的起点；挑出要下载的录音 |
 | `packer.py` | 生成素材包与 `HANDOFF.md` |
 | `audio.py` | 用 ffmpeg 把录音视频转成单声道、响度均衡的 `audio.flac`；打包器接受替换的提取函数，测试不需要 ffmpeg |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
-| `checks.py` | 环境检查，`doctor` 和网页共用 |
+| `checks.py` | 环境检查，`doctor`、`setup` 和网页共用；补丁用 `git apply --reverse --check` 判断是否已打上 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
 | `devnotes.py` | 进度页的数据：工作区的 `开发进度.md`（或开发手册的「当前状态」）、CHANGELOG 的「未发布」、`git log` 和未提交/未推送数；意见追加到工作区的 `意见.md` |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
@@ -47,9 +49,22 @@
 
 ## 关键决定
 
-**只调用，不内置 MediaCrawler。** 它的许可证是非商业、不可转让的，和本仓库的 MIT 不兼容。
-Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的 `--save_data_path`，
+**只调用，不内置 MediaCrawler；随包带的是补丁和安装程序。** 它的许可证是非商业、不可转让的，和本仓库的 MIT 不兼容，
+挑出有用的部分并进来也一样（那部分仍受它的许可证约束，整个仓库就不能按 MIT 发布），而且它每个平台的签名、登录和反爬应对
+一直在改，并进来就得自己跟着维护。所以 Gleaner 通过子进程调用使用者自己的副本，一次运行一个新的 `--save_data_path`，
 这样不用像别的项目那样比较文件修改时间来找出“这次新增的文件”。
+“装好就能用”靠 `gleaner setup`：从官方仓库下载、固定到核对过的提交（日志标记和导出字段是按这个版本核对的）、打补丁。
+补丁是 `git diff` 生成的普通 diff，按许可证要求附 `NOTICE`；打之前先用 `git apply --reverse --check` 看是否已打上、
+`git apply --check` 看能否打上，有一个冲突就一个都不打，不会改到一半。MediaCrawler 只读配置文件，没有对应的命令行参数，
+所以增量搜索的时间范围由补丁改成读环境变量（`GLEANER_*`），不设时和原版一样。
+
+**增量搜索按“上次成功搜索”算起点。** 起点是这些关键词在这个平台上次 `ok` 的搜索运行的开始时间里最早的那个，再往前 1 天：
+用运行开始时间而不是帖子发布时间，是因为平台的搜索结果不按时间排完，看到的最新帖子不代表更早的都看过了；
+往前 1 天覆盖时钟差、平台的索引延迟，以及抖音、知乎只能选固定范围造成的误差。降级的运行不推进起点，
+新加的关键词没有起点，这一次就不限时间。各平台能表达的范围不同（见 [MediaCrawler 接入](mediacrawler.md#增量搜索)），
+小红书完全不能按时间搜，只能按最新排序。牛客没有搜索，读取器拿到 `since` 后在列表里跳过旧帖，
+一整页都早于 `since` 就停止翻页（列表本身按发布时间倒序）；拿到的 `known` 是已保存的帖子 ID，直接跳过不读详情。
+按链接抓取和 `--full` 不做增量。
 
 **失败是“降级”，不是崩溃。** 登录过期、滑块验证、超时、退出码非 0、没有产出，都记为 `degraded` 并写明原因；
 已经产出的数据照常导入。退出码 3 让脚本能区分降级和真正的错误。
@@ -121,7 +136,7 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 
 | 表 | 内容 |
 |---|---|
-| `runs` | 每次抓取或导入：来源、模式、参数（下载录音的运行带 `media: true`）、状态、降级原因、计数 |
+| `runs` | 每次抓取或导入：来源、模式、参数（下载录音的运行带 `media: true`；搜索带 `incremental` 和 `since`）、状态、降级原因、计数；增量搜索的起点从这里算 |
 | `posts` | 帖子内容、图片和录音视频的路径（相对工作区）、互动数、标签与理由、打包记录 |
 | `checkpoints` | 每个关键词见过的最新发布时间，供以后做增量抓取 |
 
@@ -129,7 +144,8 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 
 1. 在 `models.PLATFORMS` 登记平台代码和名称，在 `urls.py` 增加稳定链接的生成和反查。
 2. 在 `adapters/` 下把一条原始记录转成 `Post`，`url` 必须是去掉会话参数后的稳定链接；在 `adapters/exports.py` 登记数据目录和图片目录。
-3. MediaCrawler 已支持的平台：在 `sources/mediacrawler.PLATFORMS` 登记分页大小、是否下载媒体、能不能下载录音。
+3. MediaCrawler 已支持的平台：在 `sources/mediacrawler.PLATFORMS` 登记分页大小、是否下载媒体、能不能下载录音；
+   能按发布时间搜索的，在 `search_window` 里换成环境变量，并在补丁 `04` 里让 MediaCrawler 读它。
    其他来源：在 `sources/` 下实现 `Fetcher`，按上面的布局写出原始记录，失败时返回 `degraded` 而不是抛异常；
    在 `pipeline.fetcher_for`、`source_name` 里接上。
 4. 在 `web/progress.py` 给出步骤和日志标记，在 `web/server.py` 的 `_HINTS` 写一句抓取说明。

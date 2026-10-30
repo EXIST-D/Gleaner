@@ -30,7 +30,7 @@ version = { attr = "gleaner.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-gleaner = ["templates/*", "web/static/*"]
+gleaner = ["templates/*", "web/static/*", "patches/mediacrawler/*"]
 
 [tool.ruff]
 line-length = 110

@@ -3,13 +3,16 @@ from datetime import timedelta
 
 from gleaner.errors import GleanerError
 from gleaner.pipeline import (
+    SEARCH_OVERLAP,
     SOURCE_XHS,
+    SearchPlan,
     crawl,
     fetcher_for,
     import_export,
     planned_notes,
     recordings_to_download,
     screen,
+    search_plan,
     seconds_until_next_crawl,
     source_name,
 )
@@ -17,6 +20,7 @@ from gleaner.sources.base import FetchResult
 from gleaner.sources.mediacrawler import MediaCrawlerDriver
 from gleaner.sources.nowcoder import NowcoderFetcher
 from gleaner.store import Store
+from gleaner.timeutil import iso
 from tests.support import (
     BILI_RECORDING,
     BILI_RECORDING_BVID,
@@ -42,8 +46,18 @@ class FakeDriver:
     def problems(self):
         return []
 
-    def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
-        self.calls.append({"mode": mode, "keywords": list(keywords), "targets": list(targets)})
+    def run(
+        self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None, since=None, known=()
+    ):
+        self.calls.append(
+            {
+                "mode": mode,
+                "keywords": list(keywords),
+                "targets": list(targets),
+                "since": since,
+                "known": set(known),
+            }
+        )
         if self.produce:
             self.write(output_dir)
         return FetchResult(self.status, output_dir, "" if self.status == "ok" else "登录过期")
@@ -55,7 +69,16 @@ class PipelineTest(WorkspaceTestCase):
         self.config = make_config(self.workspace)
 
     def crawl(
-        self, store, driver, *, platform="xhs", now=NOW, force=False, keywords=("后端 面经",), targets=()
+        self,
+        store,
+        driver,
+        *,
+        platform="xhs",
+        now=NOW,
+        force=False,
+        keywords=("后端 面经",),
+        targets=(),
+        incremental=True,
     ):
         return crawl(
             store,
@@ -67,7 +90,61 @@ class PipelineTest(WorkspaceTestCase):
             max_notes=None,
             force=force,
             now=now,
+            incremental=incremental,
         )
+
+    def test_incremental_search_starts_a_day_before_the_last_successful_search(self):
+        later = NOW + timedelta(hours=6)
+        with Store.open(self.workspace, create=True) as store:
+            first = FakeDriver()
+            outcome = self.crawl(store, first)
+            self.assertIsNone(first.calls[0]["since"])
+            self.assertEqual(outcome.search, "不限发布时间")
+
+            second = FakeDriver()
+            outcome = self.crawl(store, second, now=later)
+            self.assertEqual(second.calls[0]["since"], NOW - SEARCH_OVERLAP)
+            self.assertEqual(second.calls[0]["known"], {"aa01", "bb02", "cc03", "dd04"})
+            self.assertIn("小红书不能按发布时间搜索", outcome.search)
+            self.assertEqual(store.runs()[0].params["since"], iso(NOW - SEARCH_OVERLAP))
+
+            third = FakeDriver()
+            self.crawl(store, third, now=later + timedelta(hours=1), keywords=("后端 面经", "Java 一面"))
+            self.assertIsNone(third.calls[0]["since"], "a keyword never searched before: any time")
+
+            full = FakeDriver()
+            self.crawl(store, full, now=later + timedelta(hours=2), incremental=False)
+            self.assertEqual((full.calls[0]["since"], full.calls[0]["known"]), (None, set()))
+            self.assertFalse(store.runs()[0].params["incremental"])
+
+    def test_degraded_searches_do_not_move_the_incremental_start(self):
+        with Store.open(self.workspace, create=True) as store:
+            self.crawl(store, FakeDriver(status="degraded"))
+            driver = FakeDriver()
+            self.crawl(store, driver, now=NOW + timedelta(hours=1))
+            self.assertIsNone(driver.calls[0]["since"])
+
+    def test_search_plan_asks_the_platform_for_the_narrowest_range(self):
+        with Store.open(self.workspace, create=True) as store:
+            store.begin_run(
+                "r1",
+                source="mediacrawler-dy",
+                mode="search",
+                params={"keywords": ["后端"]},
+                output_dir="x",
+                now=iso(NOW),
+            )
+            store.finish_run("r1", status="ok", message="", counts={}, now=iso(NOW))
+            plan = search_plan(store, platform="dy", keywords=["后端"], now=NOW + timedelta(hours=2))
+            self.assertEqual((plan.since, plan.window), (NOW - SEARCH_OVERLAP, "一周内"))
+            self.assertEqual(plan.describe("dy"), "增量：只搜一周内发布的帖子")
+            later = search_plan(store, platform="dy", keywords=["后端"], now=NOW + timedelta(days=400))
+            self.assertIsNone(later.since, "longer ago than Douyin's widest range: any time")
+            nowcoder = search_plan(store, platform="nowcoder", keywords=["后端"], now=NOW)
+            self.assertIsNone(nowcoder.since, "runs are kept per platform")
+            self.assertEqual(
+                search_plan(store, platform="dy", keywords=["后端"], now=NOW, incremental=False), SearchPlan()
+            )
 
     def test_crawl_imports_and_screens_new_posts(self):
         with Store.open(self.workspace, create=True) as store:

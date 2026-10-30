@@ -6,8 +6,8 @@
 
 ## 1. 搭环境
 
-需要：git、Python 3.11+、[uv](https://docs.astral.sh/uv/)、Node.js 18+（检查前端语法；MediaCrawler 也要用）、
-新版 Chrome（只有 MediaCrawler 需要）、[GitHub CLI](https://cli.github.com/)。
+需要：git、Python 3.11+、[uv](https://docs.astral.sh/uv/)、Node.js 18+（检查前端语法）、
+Chrome 或 Edge（MediaCrawler 扫码登录用；没有的话 `gleaner setup` 装 Playwright 的 Chromium）、[GitHub CLI](https://cli.github.com/)。
 
 ```bash
 gh auth login                                  # 用 EXIST-D 账号登录
@@ -26,50 +26,38 @@ Interview Bank 或网络。
 
 Windows 上虚拟环境的程序在 `.venv\Scripts\` 下，把下文的 `.venv/bin/` 换掉即可；提交钩子由 Git for Windows 自带的 sh 执行。
 
-## 2. 外部依赖（用到再装）
-
-两者都不进本仓库，各自放在仓库目录下（已被 git 忽略），默认配置就指向这些位置。
-
-- **MediaCrawler**：抓小红书、抖音、B 站、知乎时需要；只抓牛客不需要。
-  ```bash
-  git clone https://github.com/NanmiCoder/MediaCrawler.git MediaCrawler
-  (cd MediaCrawler && uv sync)
-  ```
-  它的本地配置不随仓库走，新 clone 要按 [MediaCrawler 接入](mediacrawler.md) 重新改一遍
-  （至少把 `config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改成 `False`）。
-  Gleaner 的日志识别和导出字段是按 MediaCrawler `68d9ef1`（2026-10-27）核对的。它改版后如果进度条不动或字段缺失，
-  先对照 `sources/mediacrawler.py`、`web/progress.py` 和 `adapters/<平台>.py`。
-  登录状态在 `MediaCrawler/browser_data/`，和电脑绑定，换电脑要重新扫码。
-- **Interview Bank**：打包后导入采集题库、网页控制台的「题库」页需要。
-  ```bash
-  gh repo clone EXIST-D/Interview-bank ../Interview-bank
-  ```
-  在 `workspace/gleaner.toml` 的 `[handoff]` 里填 `ibank = "<Interview-bank>/skills/interview-bank/scripts/ibank.py"`，
-  `python` 填一个 3.10+ 的解释器。
-- **ffmpeg 和 faster-whisper**：只有转写 B 站面试录音时需要。没有系统的 ffmpeg 时，可以和 faster-whisper 装进同一个虚拟环境：
-  ```bash
-  uv venv --python 3.11 workspace/asr-venv
-  uv pip install --python workspace/asr-venv/bin/python faster-whisper imageio-ffmpeg
-  mkdir -p workspace/bin && ln -s "$(workspace/asr-venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" workspace/bin/ffmpeg
-  ```
-  然后在 `workspace/gleaner.toml` 里写 `[media] ffmpeg = "bin/ffmpeg"` 和 `[handoff] asr_python = "asr-venv/bin/python"`。
-  链接必须叫 `ffmpeg`：MediaCrawler 按这个名字在 PATH 里找它。
-
-## 3. 工作区和数据
+## 2. 外部依赖和工作区
 
 ```bash
 export GLEANER_HOME="$PWD/workspace"
-.venv/bin/gleaner init        # 生成 workspace/gleaner.toml、gleaner.db、runs/、packs/
-.venv/bin/gleaner doctor      # 检查 MediaCrawler、ibank.py、采集题库
+.venv/bin/gleaner setup       # 创建工作区，装 MediaCrawler（含补丁）、Interview Bank 和采集题库、转写工具
+.venv/bin/gleaner doctor      # 每一项都应该是 ✓
 ```
+
+`setup` 装的东西都不进本仓库，放在仓库目录下（已被 git 忽略），路径写进 `workspace/gleaner.toml`，
+每一部分装了什么见 README 的「`gleaner setup` 装了什么」，可以只装用得到的部分：
+
+- **MediaCrawler**（`setup mediacrawler`）：抓小红书、抖音、B 站、知乎时需要；只抓牛客不需要。
+  固定在 `installer.MEDIACRAWLER_COMMIT`（`68d9ef1`，2026-10-27），Gleaner 的日志识别和导出字段是按这个版本核对的，
+  补丁在 `src/gleaner/patches/mediacrawler/`，见 [MediaCrawler 接入](mediacrawler.md#补丁)。
+  它改版后如果进度条不动或字段缺失，先对照 `sources/mediacrawler.py`、`web/progress.py` 和 `adapters/<平台>.py`。
+  登录状态在 `MediaCrawler/browser_data/`，和电脑绑定，换电脑要重新扫码。
+- **Interview Bank**（`setup bank`）：打包后导入采集题库、网页控制台的「题库」页需要。没配置时下载到 `Interview-bank/`；
+  已经有一份（例如 `gh repo clone EXIST-D/Interview-bank ../Interview-bank`）就在 `[handoff] ibank` 写上它的 `ibank.py`，
+  `setup` 会沿用。
+- **ffmpeg 和 faster-whisper**（`setup media`）：只有转写 B 站面试录音时需要。装在 `workspace/asr-venv/`，
+  没有系统的 ffmpeg 时用 `imageio-ffmpeg` 的程序，在 `workspace/bin/ffmpeg` 放一个链接（Windows 是副本）。
+  链接必须叫 `ffmpeg`：MediaCrawler 按这个名字在 PATH 里找它。
+
+## 3. 工作区和数据
 
 数据都不进 git：`workspace/`（数据库、原始导出、图片、素材包）、`collected-bank/`（采集题库）、`MediaCrawler/`。
 要在新电脑上接着用旧数据，就把它们拷过去：
 
 - **采集题库**：在旧电脑上运行 `python3 <ibank.py> backup create --bank collected-bank`，
   把生成在 `collected-bank/backups/` 里的 ZIP 拷到新电脑，再运行 `backup restore --archive <ZIP> --destination collected-bank`。
-- **Gleaner 工作区**：先停掉网页控制台，再把整个 `workspace/` 打包拷过去。配置里都是相对路径，不用改；
-  只需按新电脑的情况改 `[handoff]` 的 `ibank` 和 `python`。
+- **Gleaner 工作区**：先停掉网页控制台，再把整个 `workspace/` 打包拷过去（`asr-venv/` 和 `bin/` 不用拷）。
+  配置里大多是相对路径；拷过去后运行一次 `gleaner setup`，它会补装缺的东西，并把用不了的 `[handoff] python` 换成可用的。
 
 SQLite 数据库和题库都没有合并工具。**同一时间只在一台电脑上抓取和导入**；换电脑时整份拷过去，不要两边各抓一些再合并。
 只改代码、跑测试时不需要任何数据。
@@ -133,20 +121,26 @@ git push
 - 小红书、牛客、知乎（真实抓取导入过），抖音、B 站（真实试抓过，字段和进度识别都对）的抓取、去重、初筛、打包，
   网页控制台的全部页面。
 - B 站面试录音：初筛标出录音 → `gleaner media` 下载音视频 → 打包成 `audio.flac` → Interview Bank 转写导入。
-  2026-10-29 先手工试了一遍（两段共约 1.5 小时的录音导入 33 道题），再做进 Gleaner；
-  做进来之后用真实视频核对过音频提取（35 分钟 2 秒，约 44 MB）和 HANDOFF 里的转写命令，
-  还没用 `gleaner media` 真实下载过一次。工作区里标成录音的 4 个视频中有两个已经手工导入过（帖子键记在本机的
-  `开发进度.md`），不要再下载打包，否则题会重复计数。
+  2026-10-29 先手工试了一遍（两段共约 1.5 小时的录音导入 33 道题），再做进 Gleaner。
+  2026-10-30 用 `gleaner media` 真实下载了另外两个录音（一次一个，各 2.5 和 4 分钟；CDN 返回 HTTP 567 时 MediaCrawler 会换地址重试），
+  打包后按 HANDOFF 的命令转写（`large-v3-turbo`，分别约 3 和 6 分钟，211 和 407 段），面试官的问题都转出来了；
+  抽题和提交是 Agent 的事，还没做。已经导入过的录音帖子键记在本机的 `开发进度.md`，不要再下载打包，否则题会重复计数。
 - 快手试抓过两个关键词，40 个视频全是无关内容或引流，已经不再支持。
-- 抖音（要先给 MediaCrawler 打 `docs/mediacrawler.md` 里的补丁）：2026-10-29 试抓“后端 面经”一页 12 篇，
-  字段、图片和初筛都对，其中 4 篇图集和正文面经已导入采集题库。有一篇的最后一张图是面试陪跑广告，
-  初筛只读文字看不到，是打包看图时人工改成引流的。
+- 抖音：2026-10-29 试抓“后端 面经”一页 12 篇，字段、图片和初筛都对，其中 4 篇图集和正文面经已导入采集题库。
+  有一篇的最后一张图是面试陪跑广告，初筛只读文字看不到，是打包看图时人工改成引流的。
+  2026-10-30 打补丁后再搜（增量，一周内）：缓存的登录直接可用，22 条里新增 9 条，发布时间都在一周内。
+- `gleaner setup`：2026-10-30 在 macOS 的全新目录里从零装过一遍（MediaCrawler 下载、4 个补丁、`uv sync`、Interview Bank、
+  采集题库、faster-whisper 和 imageio-ffmpeg），`doctor` 全部通过；那次发现系统自带的 `python3` 是 3.9，已改成检查版本。
+  Windows 和 Linux 上只跑过单元测试，没有真实装过。
+- 增量抓取：2026-10-30 真实跑过牛客（第二次跳过已保存的帖子，第 5 页整页是旧帖时停下）、抖音和 B 站
+  （20 个视频最早的发布于起点之后）。知乎只核对过补丁能导入，还没真实增量搜过。
 
 待办（大致按优先级）：
 
 1. 采集题库里大部分题还没有参考答案（`ibank.py stats` 的 `answer_status.missing`；目前只有智能体领域补过）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
-2. 用 `gleaner media` 真实下载剩下两个录音，走一遍打包和转写导入。
+2. 让 Agent 读最新素材包里两个录音的转写，抽题并提交（HANDOFF 里的 `media-task` → `ingest submit`）。
    另有几个 B 站视频从标题看不出是不是录音，可以打开看看，是的话用 `gleaner media <帖子键>` 下载。
-3. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。
-4. 采集题库与个人题库的覆盖对照。
+3. 在 Windows 上真实跑一遍 `gleaner setup`；知乎真实增量搜一次。
+4. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。
+5. 采集题库与个人题库的覆盖对照。

@@ -18,10 +18,12 @@ from gleaner.sources.base import Fetcher
 from gleaner.sources.mediacrawler import MediaCrawlerDriver, Runner, search_notes_per_keyword
 from gleaner.sources.nowcoder import NowcoderFetcher
 from gleaner.store import Store
-from gleaner.timeutil import iso, new_id, parse_iso
+from gleaner.timeutil import CHINA_TZ, iso, new_id, parse_iso
 
 CRAWL_PLATFORMS = (*mediacrawler.PLATFORMS, "nowcoder")
 SOURCE_XHS = "mediacrawler-xhs"
+SEARCH_OVERLAP = timedelta(days=1)
+"""Incremental searches reach this far behind the last search: platforms index new posts with a delay."""
 
 
 def source_name(platform: str) -> str:
@@ -141,12 +143,15 @@ class CrawlOutcome:
     status: str
     message: str
     summary: ImportSummary
+    search: str = ""
+    """How far back a search went (`SearchPlan.describe`); empty for other runs."""
 
     def as_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "status": self.status,
             "message": self.message,
+            "search": self.search,
             **self.summary.as_dict(),
         }
 
@@ -160,6 +165,41 @@ def planned_notes(
     per_keyword = max_notes or default_max_notes(config, platform)
     size = page_size(platform)
     return (search_notes_per_keyword(per_keyword, size) if size else per_keyword) * len(keywords)
+
+
+@dataclass(frozen=True)
+class SearchPlan:
+    """How far back a search goes; since None searches any time (first search of a keyword, or --full)."""
+
+    since: datetime | None = None
+    window: str = ""
+    """What the platform is asked for, empty when it cannot narrow its search."""
+
+    def describe(self, platform: str) -> str:
+        if self.since is None:
+            return "不限发布时间"
+        if platform == "nowcoder":
+            start = f"{self.since.astimezone(CHINA_TZ):%Y-%m-%d %H:%M}"
+            return f"增量：跳过已保存的帖子，翻到 {start} 之前发布的就停"
+        if self.window:
+            return f"增量：只搜{self.window}发布的帖子"
+        return f"增量：{PLATFORMS[platform].label}不能按发布时间搜索，照常按最新排序抓取，已有的帖子只更新"
+
+
+def search_plan(
+    store: Store, *, platform: str, keywords: list[str], now: datetime, incremental: bool = True
+) -> SearchPlan:
+    """Search posts published since every keyword's last successful search, less SEARCH_OVERLAP."""
+    if not incremental or not keywords:
+        return SearchPlan()
+    latest = store.last_searches(source_name(platform))
+    if any(keyword not in latest for keyword in keywords):
+        return SearchPlan()
+    since = min(parse_iso(latest[keyword]) for keyword in keywords) - SEARCH_OVERLAP
+    if platform in ("nowcoder", "xhs"):
+        return SearchPlan(since)
+    window = mediacrawler.search_window(platform, since, now)
+    return SearchPlan(since, window.text) if window else SearchPlan()
 
 
 def run_dirs(config: Config, run_id: str) -> tuple[Path, Path]:
@@ -179,8 +219,13 @@ def crawl(
     force: bool,
     now: datetime,
     media: bool = False,
+    incremental: bool = True,
 ) -> CrawlOutcome:
-    """One crawl and its import. With media the fetcher must download videos too (see `fetcher_for`)."""
+    """One crawl and its import. With media the fetcher must download videos too (see `fetcher_for`).
+
+    An incremental search only looks for posts published since its keywords were last searched
+    (`search_plan`) and lets the source skip posts already saved.
+    """
     _check_platform(platform)
     mode = "detail" if targets else "search"
     if media:
@@ -190,6 +235,9 @@ def crawl(
     if mode == "search" and not keywords:
         raise GleanerError("没有关键词：用 --keyword 指定，或在 gleaner.toml 的 keywords 里配置")
     check_interval(store, config, now, force, platform=platform)
+    incremental = incremental and mode == "search"
+    plan = search_plan(store, platform=platform, keywords=keywords, now=now, incremental=incremental)
+    known = {record.post.post_id for record in store.posts(platforms=[platform])} if incremental else set()
 
     run_id = new_id("run", now)
     run_dir, raw_dir = run_dirs(config, run_id)
@@ -204,6 +252,9 @@ def crawl(
     }
     if media:
         params["media"] = True
+    if mode == "search":
+        params["incremental"] = incremental
+        params["since"] = iso(plan.since) if plan.since else None
     store.begin_run(
         run_id,
         source=source_name(platform),
@@ -219,6 +270,8 @@ def crawl(
         keywords=keywords,
         targets=targets,
         max_notes=max_notes,
+        since=plan.since,
+        known=known,
     )
     summary = import_raw(store, config, run_id=run_id, raw_dir=raw_dir, now=now)
     status, message = result.status, result.message
@@ -229,7 +282,7 @@ def crawl(
             "可以对没下载到的视频单独再试一次"
         )
     store.finish_run(run_id, status=status, message=message, counts=summary.as_dict(), now=iso(now))
-    return CrawlOutcome(run_id, status, message, summary)
+    return CrawlOutcome(run_id, status, message, summary, plan.describe(platform) if mode == "search" else "")
 
 
 def import_export(store: Store, config: Config, source: Path, *, now: datetime) -> CrawlOutcome:

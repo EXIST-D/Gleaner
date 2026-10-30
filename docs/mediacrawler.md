@@ -1,40 +1,70 @@
 # MediaCrawler 接入
 
 Gleaner 调用你本机的 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 抓取小红书、抖音、B 站和知乎，
-自己不包含它的代码。牛客不经过 MediaCrawler，见 [牛客读取](nowcoder.md)。
-以下内容按 2026 年 10 月的 MediaCrawler main 分支核对。
+自己不包含它的代码，只带几个补丁。牛客不经过 MediaCrawler，见 [牛客读取](nowcoder.md)。
+以下内容按 2026 年 10 月的 MediaCrawler main 分支（`68d9ef1`）核对。
 
 ## 安装
 
-在 Gleaner 仓库根目录下执行，MediaCrawler 放在 `MediaCrawler/`（已被 git 忽略，默认配置就指向这里）：
-
 ```bash
-git clone https://github.com/NanmiCoder/MediaCrawler.git MediaCrawler
-cd MediaCrawler
-uv sync            # 需要先安装 uv 和 Node.js 16+
+gleaner setup mediacrawler
 ```
 
-MediaCrawler 默认用 CDP 模式驱动新版 Chrome（144+），不需要安装 Playwright 浏览器。登录有两种方式：
+它做的事（可以重复运行，做过的会跳过）：
 
-- **独立窗口（推荐）**：把 `config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改成 `False`。
-  运行时 MediaCrawler 会自己打开一个 Chrome 窗口并显示对应平台的二维码，用手机上的小红书、抖音、哔哩哔哩或知乎扫码；
-  遇到验证码或滑块就在这个窗口里完成。登录状态按平台保存在 `MediaCrawler/browser_data/`，和你日常用的 Chrome 完全隔离，
-  方便使用小号；登录没过期时下次不用再扫码。每个平台第一次抓取都要各扫一次。
-- **连接日常 Chrome**：保持 `CDP_CONNECT_EXISTING = True`，在 Chrome 地址栏手动打开 `chrome://inspect/#remote-debugging`，
-  勾选 “Allow remote debugging for this browser instance”。运行时 Chrome 会弹出确认框，60 秒内点“接受”。
+1. 没有 `MediaCrawler/` 时用 git 从官方仓库下载到仓库目录（工作区旁边，已被 git 忽略），并切到验证过的版本
+   （`src/gleaner/installer.py` 的 `MEDIACRAWLER_COMMIT`）。已经有一份时不动它，版本不同只提示。
+2. 打上 `src/gleaner/patches/mediacrawler/` 里的补丁（见下文）。打上之前先逐个检查：已经打过的跳过，
+   和你本机的改动冲突时停下，什么都不改，提示先在 MediaCrawler 里 `git stash`。
+3. `uv sync` 装依赖（需要先装 [uv](https://docs.astral.sh/uv/)）。
+4. 找 Chrome 或 Edge；都没有时 `uv run playwright install chromium`，MediaCrawler 会退回标准模式用它。
 
-## 建议修改的本地配置
+`gleaner doctor` 会检查补丁是否都打上了。想自己装也可以：`git clone` 到 `MediaCrawler/`、
+在里面 `git apply <补丁>`、`uv sync`，效果一样。
 
-这些配置在 `MediaCrawler/config/` 里，命令行没有对应参数：
+MediaCrawler 用 CDP 模式驱动本机的 Chrome 或 Edge。补丁把它设成**独立窗口**登录：运行时 MediaCrawler 自己打开一个窗口，
+显示对应平台的二维码，用手机上的小红书、抖音、哔哩哔哩或知乎扫码；遇到验证码或滑块就在这个窗口里完成。
+登录状态按平台保存在 `MediaCrawler/browser_data/`，和你日常用的浏览器完全隔离，方便使用小号；登录没过期时下次不用再扫码。
+每个平台第一次抓取都要各扫一次。想改成连接日常 Chrome，把 `config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改回 `True`，
+在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 “Allow remote debugging for this browser instance”，
+运行时 Chrome 会弹出确认框，60 秒内点“接受”。
 
-| 文件 | 配置 | 建议 | 原因 |
-|---|---|---|---|
-| `base_config.py` | `CDP_CONNECT_EXISTING` | `False` | 使用上面推荐的独立窗口登录 |
-| `xhs_config.py` | `SORT_TYPE` | `"time_descending"` | 默认按热度排序；按时间排序才适合每天增量抓取 |
-| `dy_config.py` | `PUBLISH_TIME_TYPE` | 例如 `7`（一周内；`1` 一天内，`180` 半年内） | 抖音搜索默认 `0` 不限发布时间 |
-| `bilibili_config.py` | `BILI_SEARCH_MODE` | 保持 `"normal"` | 其他模式按日期逐天搜索，请求多得多 |
-| `base_config.py` | `CRAWLER_MAX_SLEEP_SEC` | 保持 2 或更大 | 控制请求间隔 |
-| `base_config.py` | `ENABLE_CDP_MODE` | 保持 `True` | 复用你的浏览器登录状态 |
+## 补丁
+
+Gleaner 不分发 MediaCrawler，只分发对它的几处修改。MediaCrawler 使用“非商业学习许可证 1.1”，
+允许非商业目的的修改，要求保留它的版权和许可声明，所以补丁放在单独的目录里，附 `NOTICE` 说明，不按 Gleaner 的 MIT 许可证授权。
+
+| 补丁 | 改了什么 | 为什么 |
+|---|---|---|
+| `01-config.patch` | `CDP_CONNECT_EXISTING = False`；小红书 `SORT_TYPE = "time_descending"` | 独立窗口登录；小红书默认按热度排序，按时间排序才适合增量抓取 |
+| `02-douyin-wait-page.patch` | 抖音打开首页后等页面稳定再读 `navigator.userAgent` | 抖音首页写入 cookie 后会再刷新一次，不等就每次都在登录前报 `Execution context was destroyed` |
+| `03-bilibili-qrcode.patch` | B 站点开登录框后等二维码图片填上 | 原来只等 1 秒，读到空图片，日志报 `login failed , have not found qrcode` 并以退出码 0 结束 |
+| `04-search-time-range.patch` | 抖音、知乎、B 站的搜索发布时间范围改由环境变量控制 | 增量抓取（见下文）；不设环境变量时和原来一样不限时间 |
+
+`04` 读的环境变量由 Gleaner 在增量搜索时设置，自己运行 MediaCrawler 时不用管：
+
+| 变量 | 平台 | 取值 |
+|---|---|---|
+| `GLEANER_DY_PUBLISH_TIME` | 抖音 | `0` 不限、`1` 一天内、`7` 一周内、`180` 半年内 |
+| `GLEANER_ZHIHU_SEARCH_TIME` | 知乎 | 空（不限）、`a_day`、`a_week`、`a_month`、`three_months`、`half_a_year`、`a_year` |
+| `GLEANER_BILI_PUBTIME_BEGIN` / `GLEANER_BILI_PUBTIME_END` | B 站 | 发布时间范围的开始和结束，Unix 秒；`0` 不限 |
+
+MediaCrawler 固定在验证过的版本（不在任何分支上，`git pull` 不起作用）。Gleaner 更新这个版本后，`gleaner setup` 会提示版本不同；
+这时在 MediaCrawler 里 `git stash && git fetch && git checkout <新版本>`（`git stash` 收起旧补丁和你的改动），
+再运行 `gleaner setup mediacrawler` 打上新补丁。
+
+## 增量搜索
+
+按关键词搜索时，Gleaner 取这些关键词在这个平台上次成功搜索的开始时间，往前多留 1 天，只要之后发布的帖子：
+
+- **B 站**：搜索接口的 `pubtime_begin_s` / `pubtime_end_s`，精确到秒（结束时间多给 1 天，避免时钟差）。
+- **抖音**：`PUBLISH_TIME_TYPE` 只有一天内、一周内、半年内，取能覆盖的最小范围；超过半年不限时间。
+- **知乎**：`search_time` 有一天内到一年内六档，同样取最小范围；超过一年不限时间。
+- **小红书**：搜索没有发布时间参数，只能按最新排序（补丁 `01`）照常抓一页，已有的帖子只更新。
+
+有一个关键词从没成功搜过、或者用了 `--full` 时不限时间。降级的搜索（例如登录过期没抓到）不算“上次成功搜索”。
+
+## 命令行参数
 
 Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置影响：
 
@@ -43,6 +73,9 @@ Gleaner 每次运行都会通过命令行强制以下参数，不受你的配置
 --get_comment no --get_sub_comment no --get_media yes|no
 --crawler_max_notes_count <max_notes> --max_concurrency_num 1
 ```
+
+`config/` 里另外几项保持 MediaCrawler 的默认就好：`BILI_SEARCH_MODE = "normal"`（其他模式按日期逐天搜索，请求多得多）、
+`CRAWLER_MAX_SLEEP_SEC` 2 或更大（请求间隔）、`ENABLE_CDP_MODE = True`。
 
 `--get_media` 只对有图文帖的平台打开：
 
@@ -99,41 +132,13 @@ MediaCrawler 的 B 站 detail 模式只认 BV 号（`media_platform/bilibili/hel
   必要时把 MediaCrawler 的 `HEADLESS` 设为 `False`，手动完成验证后再试。完整输出在 `runs/<run-id>/mediacrawler.log`。
   每个平台的 MediaCrawler 都最多等 10 分钟扫码（每秒检查一次登录状态，共 600 次）；日志里的
   “remaining time is 20s / 120s”是写死的文字，网页按 10 分钟倒计时。
-- **抖音一启动就报 `Execution context was destroyed`**：抖音首页第一次写入 cookie 后会再刷新一次，
-  MediaCrawler（2026-10 的 main 分支）不等页面稳定就去读 `navigator.userAgent`，每次都在登录前退出。
-  在 `media_platform/douyin/core.py` 的 `start()` 里，`await self.context_page.goto(self.index_url)` 后面加一段等待：
-
-  ```python
-  for _ in range(10):
-      try:
-          await self.context_page.evaluate("() => navigator.userAgent")
-          break
-      except Exception:
-          try:
-              await self.context_page.wait_for_load_state("load", timeout=15000)
-          except Exception:
-              pass
-          await asyncio.sleep(1)
-  ```
-
-  这是对你本机 MediaCrawler 的修改，`git pull` 更新 MediaCrawler 前先 `git stash`，更新后再 `git stash pop`。
-- **B 站日志里出现 `login failed , have not found qrcode`，没等扫码就退出**：登录框先插入二维码的 `<img>`，
-  稍后才填上图片；MediaCrawler 点开登录框后只等 1 秒，读到的是空图片。在 `media_platform/bilibili/login.py`
-  的 `login_by_qrcode()` 里，点击登录按钮后的 `await asyncio.sleep(1)` 后面加一段等待（同样是本机修改）：
-
-  ```python
-  try:
-      await self.context_page.wait_for_function(
-          "() => { const img = document.querySelector('.login-scan-box img'); return !!(img && img.src); }",
-          timeout=30_000,
-      )
-  except PlaywrightTimeoutError:
-      pass
-  ```
-
-  这种情况 MediaCrawler 以退出码 0 结束，Gleaner 只能报“没有产出数据”，要看日志才知道原因。
+- **抖音一启动就报 `Execution context was destroyed`，或 B 站日志里出现 `login failed , have not found qrcode`**：
+  补丁 `02` / `03` 没打上。运行 `gleaner doctor` 看哪些没打上，再运行 `gleaner setup mediacrawler`。
+  B 站这种情况 MediaCrawler 以退出码 0 结束，Gleaner 只能报“没有产出数据”，要看日志才知道原因。
 - **小红书指定帖子**：`--url` 的链接需要带 `xsec_token`，从浏览器地址栏或分享链接复制完整地址。
 - **已经用 WebUI 抓过**：`gleaner import MediaCrawler/data` 直接导入 Gleaner 支持的平台的数据（快手等其他平台的目录会跳过），不会重复抓取。
-- **MediaCrawler 改版**：命令行参数和每个平台的分页、是否下载媒体在 `src/gleaner/sources/mediacrawler.py`，
+- **MediaCrawler 改版**：先改 `installer.py` 的 `MEDIACRAWLER_COMMIT`，在新版本上重新生成补丁
+  （在 MediaCrawler 里改好后 `git diff -- <文件> > src/gleaner/patches/mediacrawler/<补丁>`）。
+  命令行参数、每个平台的分页、是否下载媒体和增量搜索的时间范围在 `src/gleaner/sources/mediacrawler.py`，
   目录对应在 `src/gleaner/adapters/exports.py`，导出字段在 `src/gleaner/adapters/<平台>.py`，
   日志里识别进度的标记在 `src/gleaner/web/progress.py`。

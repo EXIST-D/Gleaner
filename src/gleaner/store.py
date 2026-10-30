@@ -158,6 +158,19 @@ class Store:
         row = self._db.execute(sql + " ORDER BY started_at DESC LIMIT 1", args).fetchone()
         return _run(row) if row else None
 
+    def last_searches(self, source: str) -> dict[str, str]:
+        """Start time of the latest successful search run of each keyword of the source."""
+        rows = self._db.execute(
+            "SELECT params, started_at FROM runs WHERE source = ? AND mode = 'search' AND status = 'ok'"
+            " ORDER BY started_at",
+            (source,),
+        )
+        latest: dict[str, str] = {}
+        for row in rows:
+            for keyword in json.loads(row["params"]).get("keywords") or []:
+                latest[keyword] = row["started_at"]
+        return latest
+
     def runs(self, limit: int = 20) -> list[RunRecord]:
         rows = self._db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,))
         return [_run(row) for row in rows]

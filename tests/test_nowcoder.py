@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from gleaner.adapters.common import ParseReport
 from gleaner.adapters.exports import iter_posts
@@ -18,8 +19,11 @@ from tests.support import FAKE_JPEG, WorkspaceTestCase
 MOMENT_ID = "0123456789abcdef0123456789abcdef"
 
 
-def discuss_record(content_id, title, summary=""):
-    return {"contentType": 250, "contentId": content_id, "contentData": {"title": title, "content": summary}}
+def discuss_record(content_id, title, summary="", created=None):
+    data = {"title": title, "content": summary}
+    if created is not None:
+        data["createTime"] = int(created.timestamp() * 1000)
+    return {"contentType": 250, "contentId": content_id, "contentData": data}
 
 
 def page(records):
@@ -94,6 +98,38 @@ class NowcoderFetcherTest(WorkspaceTestCase):
     def saved(self):
         report = ParseReport()
         return list(iter_posts(self.workspace / "raw", self.workspace, report))
+
+    def test_incremental_search_skips_saved_posts_and_stops_at_older_pages(self):
+        since = datetime(2026, 10, 28, tzinfo=UTC)
+        newer, older = since + timedelta(hours=5), since - timedelta(hours=5)
+        fake = FakeNowcoder(
+            pages=[
+                [discuss_record(1, "后端 一面", created=newer), discuss_record(2, "后端 二面", created=newer)]
+                + [discuss_record(10 + i, "无关", created=newer) for i in range(18)],
+                [discuss_record(3, "后端 三面", created=older), discuss_record(4, "后端 一面")]
+                + [discuss_record(30 + i, "无关", created=older) for i in range(18)],
+                [discuss_record(5, "后端 一面", created=older)]
+                + [discuss_record(50, "无关", created=older)] * 19,
+                [discuss_record(7, "后端 一面", created=newer)] + [{}] * 19,
+            ],
+            details={"2": {"title": "后端 二面", "richText": "<p>Redis</p>"}, "4": {"title": "后端 一面"}},
+        )
+        fetcher = self.fetcher(fake, download_images=False, scan_pages=5)
+        result = self.fetch_into(fetcher, keywords=["后端"], max_notes=5, since=since, known={"1"})
+        self.assertTrue(result.ok, result.message)
+        lists = [body["page"] for method, url, body in fake.requests if url == LIST_URL]
+        self.assertEqual(lists, [1, 2, 3], "page 2 has a post without a time; page 3 is all older, so stop")
+        details = [url for method, url, body in fake.requests if method == "GET"]
+        self.assertEqual(
+            details, [DISCUSS_URL.format(2), DISCUSS_URL.format(4)], "1 is saved, 3 and 5 are older"
+        )
+        self.assertTrue(any("跳过已保存的 1 篇" in line for line in self.lines))
+
+        fake = FakeNowcoder(pages=[[discuss_record(6, "后端 一面", created=older)] + [{}] * 19])
+        result = self.fetch_into(self.fetcher(fake), keywords=["后端"], since=since)
+        self.assertTrue(result.ok, "nothing new since the last search is not a failure")
+        self.assertIn("没有新帖", result.message)
+        self.assertTrue(any("不再往后翻" in line for line in self.lines))
 
     def test_search_reads_newest_pages_and_keeps_matching_posts(self):
         fake = FakeNowcoder(

@@ -14,26 +14,33 @@ own checkout. Verified against NanmiCoder/MediaCrawler main as of 2026-10:
 - Bilibili detail mode only parses BV links (`media_platform/bilibili/help.py`), so av links are converted.
 - Search fetches whole result pages per keyword and raises a smaller `--crawler_max_notes_count` to one page
   (`media_platform/<platform>/core.py: search`): Douyin pages hold 10 posts, the others 20.
+- With Gleaner's patch `04-search-time-range.patch`, searches read a publish time range from `GLEANER_*`
+  environment variables: Douyin and Zhihu offer fixed ranges (a day, a week, …), Bilibili takes timestamps.
+  Xiaohongshu has no range; its search is sorted by time (`01-config.patch`). Unpatched, the variables
+  are ignored and searches cover any time.
 
 If MediaCrawler changes its command line or output layout, this module and `adapters/` change.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from gleaner.adapters.exports import content_files
 from gleaner.audio import find_ffmpeg
 from gleaner.config import MediaConfig, MediaCrawlerConfig
 from gleaner.sources.base import FetchResult
+from gleaner.timeutil import CHINA_TZ, utc_now
 from gleaner.urls import bilibili_detail_target
 
 LOG_NAME = "mediacrawler.log"
@@ -71,8 +78,51 @@ def search_notes_per_keyword(max_notes: int, page_size: int = SEARCH_PAGE_SIZE) 
     return max(page_size, max_notes // page_size * page_size)
 
 
-Runner = Callable[[Sequence[str], Path, int, Path], int]
-"""(command, working directory, timeout in seconds, log file) -> exit code; raises TimeoutError."""
+@dataclass(frozen=True)
+class SearchWindow:
+    text: str
+    """What the platform is asked for, e.g. 一周内."""
+    env: dict[str, str] = field(default_factory=dict)
+
+
+# (longest span in days, value, text), narrowest first: the platforms only offer these ranges.
+_DOUYIN_RANGES = ((1, "1", "一天内"), (7, "7", "一周内"), (180, "180", "半年内"))
+_ZHIHU_RANGES = (
+    (1, "a_day", "一天内"),
+    (7, "a_week", "一周内"),
+    (31, "a_month", "一个月内"),
+    (92, "three_months", "三个月内"),
+    (183, "half_a_year", "半年内"),
+    (366, "a_year", "一年内"),
+)
+
+
+def search_window(platform: str, since: datetime, now: datetime) -> SearchWindow | None:
+    """The narrowest publish time range of the platform's search that still reaches back to since.
+
+    None when the platform cannot narrow its search (Xiaohongshu) or the span is longer than its ranges.
+    """
+    days = max(1, math.ceil((now - since) / timedelta(days=1)))
+    if platform == "bili":
+        begin = int(since.timestamp())
+        end = int((now + timedelta(days=1)).timestamp())
+        return SearchWindow(
+            f" {since.astimezone(CHINA_TZ):%Y-%m-%d %H:%M} 之后",
+            {"GLEANER_BILI_PUBTIME_BEGIN": str(begin), "GLEANER_BILI_PUBTIME_END": str(end)},
+        )
+    ranges, variable = {
+        "dy": (_DOUYIN_RANGES, "GLEANER_DY_PUBLISH_TIME"),
+        "zhihu": (_ZHIHU_RANGES, "GLEANER_ZHIHU_SEARCH_TIME"),
+    }.get(platform, ((), ""))
+    for span, value, text in ranges:
+        if days <= span:
+            return SearchWindow(text, {variable: value})
+    return None
+
+
+Runner = Callable[[Sequence[str], Path, int, Path, Mapping[str, str]], int]
+"""(command, working directory, timeout in seconds, log file, extra environment) -> exit code;
+raises TimeoutError."""
 
 
 def build_command(
@@ -184,10 +234,15 @@ class MediaCrawlerDriver:
         keywords: Sequence[str] = (),
         targets: Sequence[str] = (),
         max_notes: int | None = None,
+        since: datetime | None = None,
+        known: Collection[str] = (),
     ) -> FetchResult:
+        """since narrows a search to posts published after it where the platform can; MediaCrawler fetches
+        every result itself, so known posts cannot be skipped."""
         problems = self.problems()
         if problems:
             return FetchResult("degraded", output_dir, "；".join(problems))
+        window = search_window(self.platform, since, utc_now()) if since and mode == "search" else None
         command = build_command(
             self.config,
             platform=self.platform,
@@ -202,7 +257,9 @@ class MediaCrawlerDriver:
         log_path = log_dir / LOG_NAME
         timeout = self.timeout_seconds
         try:
-            returncode = self.runner(command, self.config.home, timeout, log_path)
+            returncode = self.runner(
+                command, self.config.home, timeout, log_path, window.env if window else {}
+            )
         except TimeoutError:
             cause = "视频下载太慢" if self.media is not None else "可能卡在登录或滑块验证"
             return FetchResult(
@@ -244,9 +301,9 @@ def make_runner(
     path_dirs go in front of PATH, so MediaCrawler finds tools such as ffmpeg.
     """
 
-    def run(command: Sequence[str], cwd: Path, timeout: int, log_path: Path) -> int:
+    def run(command: Sequence[str], cwd: Path, timeout: int, log_path: Path, extra: Mapping[str, str]) -> int:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
+        env = {**os.environ, **extra, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
         if path_dirs:
             env["PATH"] = os.pathsep.join([*(str(path) for path in path_dirs), env.get("PATH", "")])
         with (
@@ -303,7 +360,7 @@ _HINTS = (
     (
         "Execution context was destroyed",
         "MediaCrawler 打开首页后页面又跳转了一次，读取页面时出错（抖音常见）。"
-        "按 docs/mediacrawler.md「常见问题」给 MediaCrawler 加上等待页面稳定的补丁后再试",
+        "运行 gleaner setup mediacrawler 打上等待页面稳定的补丁后再试",
     ),
 )
 

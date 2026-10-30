@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from gleaner.config import MediaConfig, MediaCrawlerConfig
@@ -11,8 +12,10 @@ from gleaner.sources.mediacrawler import (
     diagnose,
     make_runner,
     search_notes_per_keyword,
+    search_window,
     tool_dirs,
 )
+from gleaner.timeutil import utc_now
 from tests.support import (
     BILI_RECORDING,
     DOUYIN_VIDEO,
@@ -184,7 +187,7 @@ class DriverTest(WorkspaceTestCase):
         self.calls = []
 
     def driver(self, behaviour):
-        def runner(command, cwd, timeout, log_path):
+        def runner(command, cwd, timeout, log_path, env):
             self.calls.append((list(command), cwd, timeout))
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text("扫码登录中…\n", encoding="utf-8")
@@ -256,7 +259,7 @@ class DriverTest(WorkspaceTestCase):
         ffmpeg = fake_tool(self.workspace / "bin", "ffmpeg")
         media = MediaConfig(ffmpeg=str(ffmpeg), download_timeout_seconds=1800)
 
-        def runner(command, cwd, timeout, log_path):
+        def runner(command, cwd, timeout, log_path, env):
             self.calls.append((list(command), cwd, timeout))
             write_records(self.raw, "bili", [BILI_RECORDING], mode="detail")
             return 0
@@ -279,19 +282,68 @@ class DriverTest(WorkspaceTestCase):
         self.assertIn("名为 ffmpeg 的链接", "".join(driver.problems()))
 
     def test_default_runner_puts_tool_dirs_first_on_path(self):
-        (self.home / "main.py").write_text("import os\nprint(os.environ['PATH'])\n", encoding="utf-8")
+        (self.home / "main.py").write_text(
+            "import os\nprint(os.environ['PATH'])\nprint(os.environ['GLEANER_DY_PUBLISH_TIME'])\n",
+            encoding="utf-8",
+        )
         tools = self.workspace / "tools"
         runner = make_runner(path_dirs=[tools])
         log = self.raw.parent / LOG_NAME
-        self.assertEqual(runner([sys.executable, "main.py"], self.home, 30, log), 0)
-        self.assertTrue(log.read_text(encoding="utf-8").startswith(str(tools) + os.pathsep))
+        self.assertEqual(
+            runner([sys.executable, "main.py"], self.home, 30, log, {"GLEANER_DY_PUBLISH_TIME": "7"}), 0
+        )
+        lines = log.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(lines[0].startswith(str(tools) + os.pathsep))
+        self.assertEqual(lines[1], "7")
 
     def test_default_runner_enforces_timeout(self):
         (self.home / "main.py").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
         driver = MediaCrawlerDriver(self.config, echo=False)
         runner = driver.runner
         with self.assertRaises(TimeoutError):
-            runner([sys.executable, "main.py"], self.home, 1, self.raw.parent / LOG_NAME)
+            runner([sys.executable, "main.py"], self.home, 1, self.raw.parent / LOG_NAME, {})
+
+    def test_incremental_search_passes_the_time_range(self):
+        envs = []
+
+        def runner(command, cwd, timeout, log_path, env):
+            envs.append(dict(env))
+            write_records(self.raw, "douyin", [DOUYIN_VIDEO])
+            return 0
+
+        driver = MediaCrawlerDriver(self.config, runner, platform="dy")
+        since = utc_now() - timedelta(days=3)
+        driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["a"], since=since)
+        driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["a"])
+        driver.run(mode="detail", output_dir=self.raw, log_dir=self.raw.parent, targets=["1"], since=since)
+        self.assertEqual(envs, [{"GLEANER_DY_PUBLISH_TIME": "7"}, {}, {}])
+
+
+class SearchWindowTest(unittest.TestCase):
+    NOW = datetime(2026, 10, 30, 2, 0, tzinfo=UTC)
+
+    def window(self, platform, days):
+        return search_window(platform, self.NOW - timedelta(days=days), self.NOW)
+
+    def test_douyin_and_zhihu_pick_the_narrowest_range_that_reaches_back(self):
+        self.assertEqual(self.window("dy", 0.5).env, {"GLEANER_DY_PUBLISH_TIME": "1"})
+        self.assertEqual(self.window("dy", 1.5).env, {"GLEANER_DY_PUBLISH_TIME": "7"})
+        self.assertEqual(self.window("dy", 30).text, "半年内")
+        self.assertIsNone(self.window("dy", 200), "longer than half a year: any time")
+        self.assertEqual(self.window("zhihu", 20).env, {"GLEANER_ZHIHU_SEARCH_TIME": "a_month"})
+        self.assertEqual(self.window("zhihu", 300).env, {"GLEANER_ZHIHU_SEARCH_TIME": "a_year"})
+        self.assertIsNone(self.window("zhihu", 400))
+
+    def test_bilibili_takes_exact_timestamps_and_xiaohongshu_has_no_range(self):
+        window = self.window("bili", 2)
+        self.assertEqual(
+            window.env["GLEANER_BILI_PUBTIME_BEGIN"], str(int((self.NOW - timedelta(days=2)).timestamp()))
+        )
+        self.assertEqual(
+            window.env["GLEANER_BILI_PUBTIME_END"], str(int((self.NOW + timedelta(days=1)).timestamp()))
+        )
+        self.assertEqual(window.text, " 2026-10-28 10:00 之后")
+        self.assertIsNone(self.window("xhs", 2))
 
 
 if __name__ == "__main__":

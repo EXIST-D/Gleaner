@@ -41,48 +41,72 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake / m
 
 ## 环境要求
 
+自己准备的只有三样，其余的都由 `gleaner setup` 一条命令装好：
+
 - Python **3.11+**，Gleaner 本身只用标准库。
-- 你自己下载安装的 MediaCrawler（需要 uv、Node.js 和新版 Chrome），见 [MediaCrawler 接入](docs/mediacrawler.md)。
-  只抓牛客时不需要它，见 [牛客读取](docs/nowcoder.md)。
-- 导入素材包时需要 Interview Bank 的 `ibank.py`（Python 3.10+）和一个支持 Agent Skills 的 Agent。
-- 只有转写 B 站面试录音时才需要：[ffmpeg](https://ffmpeg.org/)，和一个装了 `faster-whisper` 的 Python（见下文「B 站面试录音」）。
+- [git](https://git-scm.com/)：下载 MediaCrawler 和 Interview Bank，给 MediaCrawler 打补丁。
+- [uv](https://docs.astral.sh/uv/)：MediaCrawler 用它装依赖。macOS/Linux 用
+  `curl -LsSf https://astral.sh/uv/install.sh | sh` 安装，Windows 用
+  `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`。
+
+另外最好装有 Chrome 或 Edge：MediaCrawler 会用它单独打开一个窗口让你扫码登录，没有的话 `setup` 会改装 Playwright 的 Chromium。
+导入素材包时需要一个支持 Agent Skills 的 Agent（读 HANDOFF.md 抽题）。只抓牛客的话 MediaCrawler 可以不装，见 [牛客读取](docs/nowcoder.md)。
 
 ## 快速开始
 
 ```bash
-# 1. 安装 Gleaner（在本仓库目录；需要 Python 3.11+，用 uv 时它会自动准备）
-uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python -e .
+# 1. 安装 Gleaner（在本仓库目录）
+python3 -m venv .venv && .venv/bin/pip install -e .      # Windows：py -3.11 -m venv .venv; .venv\Scripts\pip install -e .
 export PATH="$PWD/.venv/bin:$PATH"
+export GLEANER_HOME="$PWD/workspace"                      # 工作区放在仓库下的 workspace/，已被 git 忽略
 
-# 2. 把 MediaCrawler 放进仓库目录（已被 git 忽略），见 docs/mediacrawler.md
-git clone https://github.com/NanmiCoder/MediaCrawler.git MediaCrawler && (cd MediaCrawler && uv sync)
+# 2. 一条命令装好其余的一切（可以重复运行，装好的会跳过）
+gleaner setup
 
-# 3. 创建工作区（仓库下的 workspace/，已被 git 忽略）
-export GLEANER_HOME="$PWD/workspace"
-gleaner init
-#    默认配置已指向 ../MediaCrawler 和 ../collected-bank，只需填写 handoff.ibank
-
-# 4. 新建独立的采集题库（只需一次）
-python3 -B <Interview-bank>/skills/interview-bank/scripts/ibank.py init --bank collected-bank
-
-# 5. 检查环境
+# 3. 检查环境：每一项都应该是 ✓
 gleaner doctor
 
-# 6. 小批量抓取（搜索按页返回，每个关键词默认一页；同一平台两次至少间隔 5 分钟）
+# 4. 小批量抓取（搜索按页返回，每个关键词默认一页；同一平台两次至少间隔 5 分钟）
 gleaner crawl xhs --keyword "后端 面经"
 gleaner crawl xhs --url "https://www.xiaohongshu.com/explore/<帖子ID>?xsec_token=..."
 gleaner crawl bili --keyword "Java 面试 复盘"
 gleaner crawl nowcoder --keyword "后端 一面" --max-notes 10   # 在最新面经里找标题或摘要含“后端”和“一面”的
 gleaner crawl nowcoder --url "https://www.nowcoder.com/discuss/<帖子ID>"
 
-# 7. 看初筛结果，必要时人工改标签
+# 5. 看初筛结果，必要时人工改标签
 gleaner list --label candidate --platform nowcoder
 gleaner show xhs:<帖子ID>
 gleaner label xhs:<帖子ID> promo --reason "结尾在卖课"
 
-# 8. 打包，把 HANDOFF.md 交给装了 interview-bank 的 Agent
+# 6. 打包，把 HANDOFF.md 交给装了 interview-bank 的 Agent
 gleaner pack --limit 20
 ```
+
+### `gleaner setup` 装了什么
+
+分三部分，可以只装其中几部分（例如只抓牛客：`gleaner setup bank`），每一部分装好的都会跳过：
+
+| 部分 | 内容 |
+|---|---|
+| `mediacrawler` | 把 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 下载到仓库旁边的 `MediaCrawler/` 并固定到验证过的版本，打上 Gleaner 的补丁（见 [MediaCrawler 接入](docs/mediacrawler.md)），`uv sync` 装依赖；没有 Chrome 或 Edge 时再装 Playwright 的 Chromium |
+| `bank` | 把 [Interview Bank](https://github.com/EXIST-D/Interview-bank) 下载到工作区旁边的 `Interview-bank/`，用它新建独立的采集题库 `collected-bank/`；配置的 Python 低于 3.10 时改用运行 Gleaner 的 Python |
+| `media` | 转写 B 站面试录音用的工具：在 `workspace/asr-venv/` 装 `faster-whisper`；系统里没有 ffmpeg 时装 `imageio-ffmpeg` 并在 `workspace/bin/ffmpeg` 放一个链接；再把转写模型（约 1.5 GB）下载到采集题库的缓存里，`--no-model` 跳过，第一次转写时再下载 |
+
+装到哪里都会写进 `gleaner.toml`（用相对路径），已经配好、能用的路径不会被改掉。MediaCrawler 和 Interview Bank 都是各自下载、
+不随 Gleaner 分发的，许可证也各自适用。补丁和本机对 MediaCrawler 的改动冲突时，`setup` 会停下并说明，不会覆盖你的改动。
+
+### 增量抓取
+
+按关键词搜索时默认是增量的：只找上次成功搜索这些关键词之后发布的帖子（往前多留 1 天，防止漏掉刚发的）。
+各平台能做到的程度不同：
+
+- **牛客**：跳过已经保存过的帖子，翻到一整页都是上次搜索之前发布的就不再往后翻。
+- **B 站**：按发布时间搜索，精确到分钟。
+- **抖音、知乎**：平台只能选「一天内 / 一周内 / 半年内」这类固定范围，取能覆盖上次搜索时间的最小范围；隔得太久就不限时间。
+- **小红书**：不能按发布时间搜索，照常按最新排序抓取，已有的帖子只更新。
+
+换了关键词（有一个从没成功搜过）、或者上次搜索降级了，都不算数，这一次不限时间。想全部重新读一遍用 `gleaner crawl <平台> --full`，
+网页的抓取页在「高级」里勾选「不做增量」。抓取开始时会打印这一次用的范围，例如「增量：只搜 2026-10-28 10:28 之后发布的帖子」。
 
 已经用 MediaCrawler 的 WebUI 或命令行抓过的数据，可以直接导入：`gleaner import <MediaCrawler 的 data 目录>`，
 里面的 `xhs/`、`douyin/`、`bili/`、`zhihu/` 会一起导入（其他平台的目录会跳过）。
@@ -102,13 +126,13 @@ gleaner media bili:<av 号>               # 或者只下载指定的视频；也
 gleaner pack --key bili:<av 号>          # 打包时用 ffmpeg 提取单声道音频并做响度均衡，生成 audio.flac
 ```
 
-需要的准备：
+需要的工具 `gleaner setup media` 都会装好：
 
 - **ffmpeg**：B 站的画面和声音分开下载，MediaCrawler 用它合成（找不到时会退回低清晰度、可能不完整的视频）；
-  打包时也用它提取音频。不在 PATH 上时在 `[media] ffmpeg` 写路径，文件名必须叫 `ffmpeg`（可以是链接）。
-- **转写用的 Python**：`pip install faster-whisper`，在 `[handoff] asr_python` 写上它的路径。
-  HANDOFF.md 里的 `media` / `media-transcribe` / `media-task` 命令都用它运行；默认模型 `large-v3-turbo`，
-  每个采集题库第一次转写时下载约 1.5 GB，之后只在本机运行，在 CPU 上转写一段录音大约要录音时长的 1/6 到 1/3。
+  打包时也用它提取音频。想用自己的 ffmpeg 就在 `[media] ffmpeg` 写路径，文件名必须叫 `ffmpeg`（可以是链接）。
+- **转写用的 Python**：装了 `faster-whisper` 的 Python，路径在 `[handoff] asr_python`。
+  HANDOFF.md 里的 `media` / `media-transcribe` / `media-task` 命令都用它运行；默认模型 `large-v3-turbo`（约 1.5 GB），
+  只在本机运行，在 CPU 上转写一段录音大约要录音时长的 1/6 到 1/3。
 
 转写文本会听错专业词（例如 Redis 听成 Lilis，幂等听成密等），远程面试里面试官的声音也常常太小没转出来，
 所以 HANDOFF.md 要求 Agent 逐题改正并在 `correction` 里说明，只有回答能清楚看出问题时才补出题目。
@@ -150,8 +174,9 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | 命令 | 作用 |
 |---|---|
 | `init` | 创建工作区：`gleaner.toml`、`gleaner.db`、`runs/`、`packs/` |
-| `doctor` | 检查 MediaCrawler 目录与启动命令、默认关键词、`ibank.py`、采集题库、ffmpeg 和转写用的 Python |
-| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；B 站加 `--media` 同时下载音视频 |
+| `setup [部分…]` | 创建工作区并装好 MediaCrawler（含补丁）、Interview Bank 与采集题库、转写工具；部分是 `mediacrawler` `bank` `media`，不写就全装；`--no-model` 不下载转写模型 |
+| `doctor` | 检查 MediaCrawler 目录、启动命令和补丁、默认关键词、`ibank.py`、采集题库、导入用的 Python 版本、ffmpeg 和转写用的 Python |
+| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；搜索默认增量，`--full` 不限发布时间；B 站加 `--media` 同时下载音视频 |
 | `media [key…]` | 下载 B 站面试录音的音视频；不写帖子键就下载初筛标成录音、还没下载也没打包的视频；`--dry-run` 只列出 |
 | `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
 | `screen [--all]` | 对未打标签的帖子初筛；`--all` 重判以前的规则标签，人工标签不动 |
@@ -171,19 +196,22 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 ```text
 Gleaner/
 ├── src/ tests/ docs/      # 代码与文档（进 git）
-├── MediaCrawler/          # 你自己下载的 MediaCrawler，含 browser_data/ 登录状态
-├── collected-bank/        # 独立的采集题库（Interview Bank 格式）
+├── MediaCrawler/          # gleaner setup 下载并打好补丁的 MediaCrawler，含 browser_data/ 登录状态
+├── Interview-bank/        # gleaner setup 下载的 Interview Bank（已经另外装过的话用你配置的那份）
+├── collected-bank/        # 独立的采集题库（Interview Bank 格式），cache/asr/ 是转写模型
 └── workspace/             # Gleaner 工作区（GLEANER_HOME）
     ├── gleaner.toml       # 配置；路径相对本文件，默认指向 ../MediaCrawler 和 ../collected-bank
     ├── gleaner.db         # 帖子、标签、抓取记录、关键词进度
+    ├── asr-venv/ bin/     # 转写用的 Python（faster-whisper）和 ffmpeg 链接
     ├── runs/<run-id>/
     │   ├── mediacrawler.log   # MediaCrawler 的完整输出（牛客是 nowcoder.log）
     │   └── raw/<平台目录>/     # 原始导出（jsonl + media/），如 xhs/、douyin/ 与 dy/、nowcoder/；B 站录音在 bili/media/<BV 号>/
     └── packs/<pack-id>/   # 交给 Interview Bank 的素材包，格式见 docs/pack-format.md
 ```
 
-配置里用相对路径，整个 `Gleaner/` 目录挪到别处也不用改。挪动后要重建两个虚拟环境：
-仓库的 `.venv` 和 `MediaCrawler/.venv`，因为里面写着绝对路径；`uv` 会从缓存重装，不用重新下载。
+配置里用相对路径，整个 `Gleaner/` 目录挪到别处也不用改。挪动后要重建虚拟环境：
+仓库的 `.venv`、`MediaCrawler/.venv` 和 `workspace/asr-venv`，因为里面写着绝对路径；删掉 `workspace/asr-venv`
+后运行 `gleaner setup` 就会重建（`MediaCrawler/.venv` 也一样，`uv` 会从缓存重装）。
 
 ## 使用边界
 
@@ -192,7 +220,8 @@ Gleaner/
 - **牛客按 robots.txt 行事**。牛客的 robots.txt 不允许抓取站内搜索 `/search`，所以 Gleaner 不用搜索，
   而是翻阅最新面经列表（默认最多 5 页、100 篇）在本地匹配关键词；不登录，一次一个请求，间隔至少 3 秒，
   遇到 429 按 `Retry-After` 等待、连续 3 次或遇到验证页就停下。作者昵称和 IP 属地不保存。
-- **MediaCrawler 不随本仓库分发**。它的代码不在这里，每个使用者各自下载安装，各自遵守它的许可证。
+- **MediaCrawler 不随本仓库分发**。它的代码不在这里，`gleaner setup` 从它的官方仓库下载到你本机，各自遵守它的许可证。
+  仓库里只有 Gleaner 对它的几处修改（`src/gleaner/patches/mediacrawler/`），这些补丁按它的许可证保留了版权和许可声明。
 - **数据留在本机**。工作区、采集题库、MediaCrawler 目录和登录状态都已加入 `.gitignore`。帖子和图片的版权属于原作者，
   不要公开转载原文；交给题库的是题目、来源链接和必要的短摘录。
 - 素材包里的链接已经去掉 `xsec_token` 等会话参数；带参数的原始链接只保存在本机数据库里。

@@ -498,6 +498,7 @@ class WebApp:
                 max_notes=_optional_int(payload.get("max_notes")),
                 force=bool(payload.get("force")),
                 media=bool(payload.get("media")),
+                full=bool(payload.get("full")),
             )
             return json_response({"ok": True, "job": job.snapshot()})
         if path == "/api/crawl/stop":

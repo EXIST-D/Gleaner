@@ -20,6 +20,7 @@ from gleaner.pipeline import (
     default_max_notes,
     fetcher_for,
     planned_notes,
+    search_plan,
 )
 from gleaner.sources.base import Fetcher, FetchResult
 from gleaner.sources.mediacrawler import Runner, make_runner, tool_dirs
@@ -164,8 +165,10 @@ class CrawlJobs:
         max_notes: int | None,
         force: bool,
         media: bool = False,
+        full: bool = False,
     ) -> CrawlJob:
-        """media downloads the videos of the given links too (Bilibili recordings)."""
+        """media downloads the videos of the given links too (Bilibili recordings); full turns an
+        incremental search into one over any time."""
         if platform not in CRAWL_PLATFORMS:
             raise GleanerError(f"不支持抓取 {platform}")
         config = load_config(self.workspace)
@@ -185,6 +188,9 @@ class CrawlJobs:
                 raise GleanerError("已经有一个抓取正在进行，请等它结束或先停止")
             with Store.open(self.workspace) as store:
                 check_interval(store, config, now, force, platform=platform)
+                plan = search_plan(
+                    store, platform=platform, keywords=keywords, now=now, incremental=not (full or targets)
+                )
             params = {
                 "platform": platform,
                 "keywords": keywords,
@@ -195,12 +201,14 @@ class CrawlJobs:
                 ),
                 "force": force,
                 "media": media,
+                "full": full,
+                "search": "" if targets else plan.describe(platform),
             }
             job = CrawlJob(new_id("job", now), params, iso(now), download=config.nowcoder.download_images)
             self.current = job
             self._thread = threading.Thread(
                 target=self._run,
-                args=(job, config, platform, keywords, targets, max_notes, force, media),
+                args=(job, config, platform, keywords, targets, max_notes, force, media, full),
                 daemon=True,
             )
             self._thread.start()
@@ -224,6 +232,7 @@ class CrawlJobs:
         max_notes: int | None,
         force: bool,
         media: bool,
+        full: bool,
     ) -> None:
         path_dirs = tool_dirs(config.media.ffmpeg) if media else ()
         runner = make_runner(on_line=job.add_line, on_start=job.attach, path_dirs=path_dirs)
@@ -249,6 +258,7 @@ class CrawlJobs:
                     force=force,
                     now=self.clock(),
                     media=media,
+                    incremental=not full,
                 )
             job.finish(state=outcome.status, outcome=outcome.as_dict(), error=outcome.message or None)
         except GleanerError as exc:

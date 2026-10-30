@@ -17,6 +17,7 @@ from gleaner.config import (
     validate_keywords,
 )
 from gleaner.errors import GleanerError
+from gleaner.installer import PARTS, Installer, make_run
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
 from gleaner.packer import DEFAULT_LIMIT, build_pack
 from gleaner.pipeline import (
@@ -28,6 +29,7 @@ from gleaner.pipeline import (
     planned_notes,
     recordings_to_download,
     screen,
+    search_plan,
 )
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
@@ -71,6 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
         return child
 
     command("init", cmd_init, "创建工作区：配置文件、数据库和目录")
+    setup = command(
+        "setup", cmd_setup, "安装 MediaCrawler（含 Gleaner 的补丁）、Interview Bank 和转写工具，并写进配置"
+    )
+    setup.add_argument("part", nargs="*", help=f"只装这几项：{' / '.join(PARTS)}；默认全部")
+    setup.add_argument(
+        "--no-model", action="store_true", help="不下载转写模型（约 1.5 GB；第一次转写时也会下载）"
+    )
     command("doctor", cmd_doctor, "检查配置、MediaCrawler 和 Interview Bank 路径")
 
     platforms_help = "、".join(f"{code} {PLATFORMS[code].label}" for code in CRAWL_PLATFORMS)
@@ -84,6 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"搜索时每个关键词抓多少篇（1–{MAX_NOTES_CAP}；MediaCrawler 平台按整页取整，最少一页）",
     )
     crawling.add_argument("--force", action="store_true", help="忽略同一平台两次抓取之间的最小间隔")
+    crawling.add_argument(
+        "--full", action="store_true", help="不做增量：不限发布时间，以前保存过的帖子也重新读取"
+    )
     crawling.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
     crawling.add_argument(
         "--media", action="store_true", help="同时下载视频，用来转写面试录音（只支持 B 站，配合 --url）"
@@ -140,8 +152,8 @@ def build_parser() -> argparse.ArgumentParser:
 # Commands
 
 
-def cmd_init(args) -> int:
-    workspace = resolve_workspace(args.workspace)
+def init_workspace(workspace: Path) -> tuple[Path, bool]:
+    """Config, database and folders of a workspace; returns the config path and whether it was created."""
     workspace.mkdir(parents=True, exist_ok=True)
     config_path = workspace / CONFIG_NAME
     created = not config_path.exists()
@@ -151,14 +163,46 @@ def cmd_init(args) -> int:
         (workspace / name).mkdir(exist_ok=True)
     with Store.open(workspace, create=True):
         pass
+    return config_path, created
+
+
+def cmd_init(args) -> int:
+    workspace = resolve_workspace(args.workspace)
+    config_path, created = init_workspace(workspace)
     data = {"ok": True, "workspace": str(workspace), "config": str(config_path), "config_created": created}
     text = [f"工作区：{workspace}"]
     text.append(
-        f"已写入配置 {config_path}，请先填写 mediacrawler.home 和 handoff。"
+        f"已写入配置 {config_path}。下一步运行 gleaner setup，安装 MediaCrawler、Interview Bank 和转写工具。"
         if created
         else "配置已存在，未改动。"
     )
     return _emit(args, data, text)
+
+
+def cmd_setup(args) -> int:
+    unknown = [part for part in args.part if part not in PARTS]
+    if unknown:
+        raise GleanerError(f"不认识 {'、'.join(unknown)}，可选：{' / '.join(PARTS)}")
+    workspace = resolve_workspace(args.workspace)
+    _, created = init_workspace(workspace)
+    installer = Installer(workspace, run=make_run(echo=not args.json))
+    steps = installer.install(args.part or PARTS, model=not args.no_model)
+    checks = environment_checks(installer.config)
+    data = {
+        "ok": all(step.ok for step in steps),
+        "workspace": str(workspace),
+        "workspace_created": created,
+        "steps": [step.as_dict() for step in steps],
+        "checks": [check.as_dict() for check in checks],
+    }
+    text = [f"已创建工作区 {workspace}"] if created else []
+    for step in steps:
+        text.append(f"{'✓' if step.ok else '✗'} {step.title}")
+        text += [f"    {line}" for line in step.lines]
+    text.append("环境检查：")
+    text += [f"  {'✓' if check.ok else '✗'} {check.name}: {check.detail}" for check in checks]
+    _emit(args, data, text)
+    return 0 if data["ok"] else 1
 
 
 def cmd_doctor(args) -> int:
@@ -180,19 +224,23 @@ def cmd_crawl(args) -> int:
     if args.media and not targets:
         raise GleanerError("--media 要配合 --url 指定视频；按初筛结果下载录音用 gleaner media")
     fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json), media=args.media)
-    if not args.json and not targets:
-        planned = planned_notes(
-            config, platform=platform, keywords=keywords, targets=targets, max_notes=args.max_notes
-        )
-        label = PLATFORMS[platform].label
-        size = page_size(platform)
-        how = (
-            f"{label}搜索按页抓取（每页 {size} 篇）"
-            if size
-            else f"{label}：翻阅最新面经列表（最多 {config.nowcoder.scan_pages} 页），保存标题或摘要含关键词的帖子"
-        )
-        print(f"{how}：{len(keywords)} 个关键词，本次最多约 {planned} 篇", file=sys.stderr)
     with Store.open(config.workspace) as store:
+        if not args.json and not targets:
+            planned = planned_notes(
+                config, platform=platform, keywords=keywords, targets=targets, max_notes=args.max_notes
+            )
+            label = PLATFORMS[platform].label
+            size = page_size(platform)
+            how = (
+                f"{label}搜索按页抓取（每页 {size} 篇）"
+                if size
+                else f"{label}：翻阅最新面经列表（最多 {config.nowcoder.scan_pages} 页），保存标题或摘要含关键词的帖子"
+            )
+            plan = search_plan(
+                store, platform=platform, keywords=keywords, now=utc_now(), incremental=not args.full
+            )
+            print(f"{how}：{len(keywords)} 个关键词，本次最多约 {planned} 篇", file=sys.stderr)
+            print(plan.describe(platform), file=sys.stderr)
         outcome = crawl(
             store,
             config,
@@ -204,6 +252,7 @@ def cmd_crawl(args) -> int:
             force=args.force,
             now=utc_now(),
             media=args.media,
+            incremental=not args.full,
         )
     _emit(args, outcome.as_dict(), _summary_text(outcome))
     return 0 if outcome.status == "ok" else EXIT_DEGRADED

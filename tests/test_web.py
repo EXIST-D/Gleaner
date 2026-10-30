@@ -286,7 +286,18 @@ class CrawlJobTest(WorkspaceTestCase):
             def problems(self):
                 return []
 
-            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+            def run(
+                self,
+                *,
+                mode,
+                output_dir,
+                log_dir,
+                keywords=(),
+                targets=(),
+                max_notes=None,
+                since=None,
+                known=(),
+            ):
                 seen["max_notes"] = max_notes
                 self.on_line("[nowcoder] 翻阅最新面经列表第 1 页")
                 write_records(output_dir, "nowcoder", [NOWCODER_DISCUSS])
@@ -321,7 +332,18 @@ class CrawlJobTest(WorkspaceTestCase):
             def problems(self):
                 return []
 
-            def run(self, *, mode, output_dir, log_dir, keywords=(), targets=(), max_notes=None):
+            def run(
+                self,
+                *,
+                mode,
+                output_dir,
+                log_dir,
+                keywords=(),
+                targets=(),
+                max_notes=None,
+                since=None,
+                known=(),
+            ):
                 seen["targets"] = list(targets)
                 write_records(output_dir, "bili", [BILI_RECORDING], mode="detail")
                 self.on_line("[store.bilibili.update_bilibili_video] bilibili video id:1150000002")

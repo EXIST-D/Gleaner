@@ -83,7 +83,7 @@ async function copy(text) {
 const state = {
   view: null,
   overview: null,
-  crawl: { platform: "xhs", mode: "search", keywords: null, urls: "", pages: 1, count: null, force: false, media: false },
+  crawl: { platform: "xhs", mode: "search", keywords: null, urls: "", pages: 1, count: null, force: false, media: false, full: false },
   job: null,
   since: 0,
   logLines: [],
@@ -344,6 +344,7 @@ function renderCrawlForm() {
     <details class="advanced">
       <summary>高级</summary>
       <label class="check"><input type="checkbox" id="force-input" ${c.force ? "checked" : ""}> 忽略两次抓取之间的最小间隔（不推荐）</label>
+      ${c.mode === "search" ? `<label class="check"><input type="checkbox" id="full-input" ${c.full ? "checked" : ""}> 不做增量：不限发布时间，以前保存过的帖子也重新读取（默认只找上次搜索这些关键词之后发布的新帖）</label>` : ""}
     </details>`;
   updateStartButton();
 }
@@ -379,7 +380,7 @@ async function startCrawl() {
   const c = state.crawl;
   const media = c.media && Boolean(platformOf(c.platform).recordings);
   const body = c.mode === "search"
-    ? { platform: c.platform, keywords: c.keywords, max_notes: perKeyword(), force: c.force }
+    ? { platform: c.platform, keywords: c.keywords, max_notes: perKeyword(), force: c.force, full: c.full }
     : { platform: c.platform, urls: urlList(), force: c.force, media };
   await launchCrawl(body);
 }
@@ -531,6 +532,7 @@ function renderJob() {
       ${steps.some((s) => s.name === "download") ? `<span>${p.recordings ? "已下载视频" : "已下载图片"} <b>${p.media}</b></span>` : ""}
       <span>用时 <b id="elapsed">${fmtDuration(elapsed)}</b></span>
       <span>最多约 <b>${job.params.planned_notes}</b> 篇</span>
+      ${job.params.search ? `<span>${esc(job.params.search)}</span>` : ""}
     </div>
     ${finished ? resultBox(job) : `<button class="btn danger small" data-action="stop-crawl">停止抓取</button>`}
     <div class="terminal-head"><span>实时日志</span><span class="faint">完整日志保存在工作区 runs/ 目录</span></div>
@@ -1276,6 +1278,8 @@ document.addEventListener("change", (event) => {
     updateStartButton();
   } else if (event.target.id === "media-input") {
     state.crawl.media = event.target.checked;
+  } else if (event.target.id === "full-input") {
+    state.crawl.full = event.target.checked;
   } else if (event.target.id === "bank-excluded") {
     state.bank.showExcluded = event.target.checked;
     renderBank();

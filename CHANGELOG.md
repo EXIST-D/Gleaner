@@ -2,6 +2,21 @@
 
 ## 未发布
 
+- 新命令 `gleaner setup [mediacrawler|bank|media] [--no-model]`，一条命令装好其余依赖（可重复运行，装好的跳过）：
+  - `mediacrawler`：从官方仓库下载 MediaCrawler 并固定到核对过的 `68d9ef1`，打上 Gleaner 的补丁，`uv sync`；
+    没有 Chrome 或 Edge 时装 Playwright 的 Chromium。补丁和本机改动冲突时一个都不打，提示先 `git stash`。
+  - `bank`：下载 Interview Bank、新建采集题库；配置的 Python 低于 3.10（例如 macOS 自带的 3.9）时改用运行 Gleaner 的 Python。
+  - `media`：在 `workspace/asr-venv/` 装 `faster-whisper==1.2.1`；没有 ffmpeg 时装 `imageio-ffmpeg` 并链接成 `workspace/bin/ffmpeg`；
+    下载转写模型到采集题库的缓存。
+  - 装到的路径写回 `gleaner.toml`（相对路径，保留注释），能用的配置不改。`init` 的提示改为指向 `gleaner setup`。
+- MediaCrawler 补丁随包分发（`src/gleaner/patches/mediacrawler/`，附 `NOTICE`，按 MediaCrawler 的许可证）：
+  独立窗口登录和小红书按时间排序（原来要手改配置）、抖音首页等页面稳定、B 站等二维码，以及新的搜索发布时间范围。
+  `docs/mediacrawler.md` 里手工改代码的说明换成了 `gleaner setup mediacrawler`。
+- `doctor` 新增补丁检查，导入用 Python 的检查会确认版本是 3.10+（之前只看找不找得到）。
+- 增量抓取：按关键词搜索时只找上次成功搜索之后（往前多留 1 天）发布的帖子。牛客跳过已保存的帖子，翻到整页都是旧帖就停；
+  B 站按发布时间精确搜索；抖音、知乎取能覆盖的最小固定范围；小红书照常按最新排序。新关键词、降级的上次搜索不算数。
+  抓取开始时打印这次的范围，运行参数记 `incremental` 和 `since`。`crawl --full` 和网页抓取页「高级」里的「不做增量」关掉它。
+  抖音的 `PUBLISH_TIME_TYPE` 不再需要手改（之前文档建议改成 `7`）。
 - B 站面试录音转写：
   - 初筛在视频的标题和简介里找“录音”“实录”“面试全程”“真实面试”等词（`[screening] recording_terms` 可补充），
     命中记 `recording:<词>` 并算作面试证据。已有标签需要 `gleaner screen --all` 才会重判。

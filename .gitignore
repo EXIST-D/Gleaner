@@ -19,8 +19,9 @@ collected-bank/
 runs/
 packs/
 
-# Third-party crawler checkout and its login state
-MediaCrawler/
+# Third-party checkouts made by `gleaner setup`, and the crawler's login state
+/MediaCrawler/
+/Interview-bank/
 browser_data/
 *_user_data_dir/
 .env

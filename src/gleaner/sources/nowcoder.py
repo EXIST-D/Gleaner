@@ -8,6 +8,8 @@ Checked against nowcoder.com as of 2026-10; no login is needed:
   a keyword. `contentType` 250 is a discussion (讨论帖, numeric ID), 74 a moment (动态, 32-hex UUID).
 - Detail: `GET …/detail/content-data/detail/<id>` (HTML in `richText`) and `…/detail/moment-data/detail/<uuid>`.
 - Pictures come from `uploadfiles.nowcoder.com` and similar hosts; only `*.nowcoder.com` URLs are fetched.
+- An incremental search does not read posts that are saved already, and stops paging at a list page whose
+  posts were all published before the last search (records without a time never stop it).
 
 One request at a time with a fixed interval plus jitter; 429 and 5xx are retried, three 429 in a row, a 403 or a
 verification page end the run as degraded. Records are written as soon as they are read, so a stopped run keeps
@@ -23,15 +25,16 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from gleaner.adapters.nowcoder import post_images
 from gleaner.config import NowcoderConfig
 from gleaner.sources.base import FetchResult
-from gleaner.timeutil import CHINA_TZ, utc_now
+from gleaner.timeutil import CHINA_TZ, from_epoch, parse_iso, utc_now
 from gleaner.urls import nowcoder_url, post_key
 
 LOG_NAME = "nowcoder.log"
@@ -119,6 +122,18 @@ def list_entry(record: dict) -> tuple[Pick, str] | None:
     else:
         return None
     return pick, f"{data.get('title') or ''}\n{data.get('content') or ''}"
+
+
+def list_time(record: dict) -> datetime | None:
+    """When a post of the interview list was published, if the record says."""
+    if record.get("contentType") == 250:
+        data = record.get("contentData") or {}
+        value = data.get("createTime") or data.get("showTime")
+    else:
+        data = record.get("momentData") or {}
+        value = data.get("createdAt") or data.get("showTime")
+    published = from_epoch(value)
+    return parse_iso(published) if published else None
 
 
 def matches(keyword: str, text: str) -> bool:
@@ -265,7 +280,10 @@ class NowcoderFetcher:
         keywords: Sequence[str] = (),
         targets: Sequence[str] = (),
         max_notes: int | None = None,
+        since: datetime | None = None,
+        known: Collection[str] = (),
     ) -> FetchResult:
+        """A search skips known posts and stops paging once a whole list page is older than since."""
         if mode not in MODES:
             raise ValueError(f"unsupported mode: {mode}")
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -281,6 +299,7 @@ class NowcoderFetcher:
                     self.on_line(line)
 
             run = _Run(self, output_dir, mode, log)
+            run.since, run.known = since, frozenset(known)
             return run.execute(list(keywords), list(targets), max_notes or self.config.max_notes, log_path)
 
 
@@ -303,6 +322,12 @@ class _Run:
         self.images = 0
         self.failures: list[str] = []
         self.scanned = 0
+        self.since: datetime | None = None
+        self.known: frozenset[str] = frozenset()
+        self.skipped: set[str] = set()
+        """Matching posts left out because they are saved already."""
+        self.caught_up = False
+        """Paging stopped at posts older than since."""
 
     def execute(
         self, keywords: list[str], targets: list[str], per_keyword: int, log_path: Path
@@ -335,6 +360,8 @@ class _Run:
                 "degraded", self.output_dir, f"{len(self.failures)} 篇没有读到（{listed}）；{done}"
             )
         if not self.saved:
+            if self.mode == "search" and (self.skipped or self.caught_up):
+                return FetchResult("ok", self.output_dir, f"没有新帖：翻阅了最新 {self.scanned} 篇面经")
             if self.mode == "search":
                 return FetchResult(
                     "degraded",
@@ -357,17 +384,33 @@ class _Run:
             )
             records = data.get("records") if isinstance(data.get("records"), list) else []
             self.scanned += len(records)
+            entries = older = 0
             for record in records:
                 entry = list_entry(record) if isinstance(record, dict) else None
                 if entry is None:
                     continue
+                entries += 1
                 pick, text = entry
+                published = list_time(record)
+                if self.since and published and published < self.since:
+                    older += 1
+                    continue
                 for keyword in keywords:
                     if len(found[keyword]) < per_keyword and matches(keyword, text):
+                        if pick.post_id in self.known:
+                            self.skipped.add(pick.post_id)
+                            continue
                         found[keyword].append(pick.post_id)
                         picks.setdefault(pick.post_id, pick).keywords.append(keyword)
             counts = "、".join(f"{keyword} {len(ids)}" for keyword, ids in found.items())
-            self.log(f"[nowcoder] 第 {page} 页 {len(records)} 篇，累计命中 {len(picks)} 篇（{counts}）")
+            skipped = f"，跳过已保存的 {len(self.skipped)} 篇" if self.skipped else ""
+            self.log(
+                f"[nowcoder] 第 {page} 页 {len(records)} 篇，累计命中 {len(picks)} 篇（{counts}）{skipped}"
+            )
+            if entries and older == entries:
+                self.caught_up = True
+                self.log("[nowcoder] 这一页都是上次搜索之前发布的，不再往后翻")
+                break
             if all(len(ids) >= per_keyword for ids in found.values()) or len(records) < LIST_PAGE_SIZE:
                 break
         return list(picks.values())

@@ -1,0 +1,33 @@
+diff --git a/media_platform/douyin/core.py b/media_platform/douyin/core.py
+index 10380a6..4498d44 100644
+--- a/media_platform/douyin/core.py
++++ b/media_platform/douyin/core.py
+@@ -99,6 +99,7 @@ class DouYinCrawler(AbstractCrawler):
+ 
+             self.context_page = await self.browser_context.new_page()
+             await self.context_page.goto(self.index_url)
++            await self._wait_page_settled()
+ 
+             self.dy_client = await self.create_douyin_client(httpx_proxy_format)
+             if not await self.dy_client.pong(browser_context=self.browser_context):
+@@ -309,6 +310,20 @@ class DouYinCrawler(AbstractCrawler):
+                 await douyin_store.update_douyin_aweme(aweme_item=aweme_item)
+                 await self.download_media(aweme_item=aweme_item)
+ 
++    async def _wait_page_settled(self, attempts: int = 10) -> None:
++        """Douyin reloads the index page once after setting cookies; wait until scripts can run."""
++        for _ in range(attempts):
++            try:
++                await self.context_page.evaluate("() => navigator.userAgent")
++                return
++            except Exception as error:
++                utils.logger.info(f"[DouYinCrawler] Index page still navigating, waiting: {error}")
++                try:
++                    await self.context_page.wait_for_load_state("load", timeout=15000)
++                except Exception:
++                    pass
++                await asyncio.sleep(1)
++
+     async def create_douyin_client(self, httpx_proxy: Optional[str]) -> DouYinClient:
+         """Create douyin client"""
+         cookie_str, cookie_dict = await utils.convert_browser_context_cookies(

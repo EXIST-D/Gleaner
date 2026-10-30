@@ -1,0 +1,12 @@
+These patches modify MediaCrawler (https://github.com/NanmiCoder/MediaCrawler),
+Copyright (c) 2024 relakkes@gmail.com, licensed under the NON-COMMERCIAL LEARNING LICENSE 1.1
+(see LICENSE in the MediaCrawler checkout). As modifications of MediaCrawler they fall under that
+license, not under Gleaner's MIT license: non-commercial learning and research use only, no large-scale
+crawling. `gleaner setup mediacrawler` applies them to the user's own checkout of commit 68d9ef1.
+
+01-config.patch            open a separate Chrome window instead of attaching to a running one;
+                           Xiaohongshu search sorted by time
+02-douyin-wait-page.patch  wait until Douyin's index page stops reloading before reading it
+03-bilibili-qrcode.patch   wait until Bilibili's login dialog has filled in the QR code image
+04-search-time-range.patch let Gleaner narrow Douyin, Zhihu and Bilibili searches to recent posts through
+                           GLEANER_* environment variables (unset: MediaCrawler's own defaults)

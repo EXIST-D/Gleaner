@@ -1,0 +1,19 @@
+diff --git a/media_platform/bilibili/login.py b/media_platform/bilibili/login.py
+index 13e31a1..18d4c9d 100644
+--- a/media_platform/bilibili/login.py
++++ b/media_platform/bilibili/login.py
+@@ -132,6 +132,14 @@ class BilibiliLogin(AbstractLogin):
+             sys.exit()
+         await self.context_page.locator(login_entry_selector).first.click()
+         await asyncio.sleep(1)
++        # The login dialog inserts the <img> first and fills in its src a moment later.
++        try:
++            await self.context_page.wait_for_function(
++                "() => { const img = document.querySelector('.login-scan-box img'); return !!(img && img.src); }",
++                timeout=30_000,
++            )
++        except PlaywrightTimeoutError:
++            pass
+         # find login qrcode
+         qrcode_img_selector = "//div[@class='login-scan-box']//img"
+         base64_qrcode_img = await utils.find_login_qrcode(
