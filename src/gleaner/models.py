@@ -81,3 +81,10 @@ class PostRecord:
     packed_in: str | None = None
     packed_at: str | None = None
     changed_after_pack: bool = False
+    disposition: str | None = None
+    """Decided outside the packs: `manual` (imported into the bank by hand) or `skipped` (not importing)."""
+
+
+MANUAL = "manual"
+SKIPPED = "skipped"
+DISPOSITIONS = {MANUAL: "手工导入", SKIPPED: "不导入"}

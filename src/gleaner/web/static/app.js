@@ -148,6 +148,21 @@ function platformBadge(title) {
 
 /* ---------- Overview ---------- */
 
+const AUTO_STATUS = { ok: "完成", degraded: "降级", failed: "没能运行", skipped: "跳过" };
+
+function autoCard(auto) {
+  if (!auto) return `<div class="card"><h2>最近一次自动运行</h2><div class="empty">还没有运行过 gleaner auto（定时任务跑过之后会显示在这里）</div></div>`;
+  const what = (step) => step.kind === "crawl" ? `抓取 ${esc(step.platform)}` : step.kind === "media" ? `下载录音 ${esc(step.post || "")}` : step.kind === "imports" ? "对照题库" : "打包";
+  const waiting = auto.imports ? Object.keys(auto.imports.waiting || {}).length : 0;
+  return `<div class="card">
+    <h2>最近一次自动运行 <small>${esc(fmtTime(auto.finished_at))}</small></h2>
+    <div class="list">${auto.steps.map((step) => `
+      <div class="list-row"><span class="mark ${step.status === "ok" || step.status === "skipped" ? "ok" : "bad"}">${step.status === "ok" || step.status === "skipped" ? "✓" : "!"}</span>
+        <div class="grow"><div class="title">${what(step)}：${AUTO_STATUS[step.status] || esc(step.status)}</div>${step.message ? `<div class="sub" title="${esc(step.message)}">${esc(step.message)}</div>` : ""}</div></div>`).join("")}</div>
+    ${waiting ? `<div class="sub">还有 ${waiting} 个素材包在等导入</div>` : ""}
+  </div>`;
+}
+
 async function renderOverview() {
   const o = await refreshOverview();
   const labels = o.stats.labels || {};
@@ -185,6 +200,7 @@ async function renderOverview() {
             <div class="legend">${segments.map((s) => `<span><i class="c-${s.id}"></i>${esc(s.title)} ${s.n}</span>`).join("")}</div>
           ` : `<div class="empty">暂无数据</div>`}
         </div>
+        ${autoCard(o.auto)}
         <div class="card">
           <h2>最近抓取</h2>
           <div class="list">
@@ -576,7 +592,7 @@ async function renderPosts() {
   const data = await api(`/api/posts?${params}`);
   f.data = data;
   if (!state.overview) await refreshOverview();
-  const visibleKeys = new Set(data.posts.filter((p) => !p.packed_in).map((p) => p.key));
+  const visibleKeys = new Set(data.posts.filter((p) => !handled(p)).map((p) => p.key));
 
   const view = $("#view-posts");
   const searchHadFocus = document.activeElement?.id === "post-search";
@@ -622,7 +638,7 @@ function postCard(p) {
   return `
     <article class="post-card${selected ? " selected" : ""}" data-action="open-post" data-key="${esc(p.key)}">
       <div class="thumb">${p.thumb ? `<img src="${esc(p.thumb)}" alt="" loading="lazy">` : `<div class="placeholder">${esc(p.excerpt || p.title)}</div>`}</div>
-      ${p.packed_in ? `<span class="pill packed-flag">已打包</span>` : `<span class="pick" data-action="toggle-select" data-key="${esc(p.key)}" title="选择">${selected ? "✓" : ""}</span>`}
+      ${p.packed_in ? `<span class="pill packed-flag">已打包</span>` : p.disposition ? `<span class="pill packed-flag">${esc(p.disposition_title)}</span>` : `<span class="pick" data-action="toggle-select" data-key="${esc(p.key)}" title="选择">${selected ? "✓" : ""}</span>`}
       <div class="content">
         <div class="title">${esc(p.title)}</div>
         <div class="badges"><span class="pill ${esc(p.label || "")}">${esc(p.label_title)}</span>${p.kind === "video" ? videoBadge(p) : intake}</div>
@@ -683,14 +699,14 @@ async function openPost(key) {
         <dt>话题</dt><dd>${esc(post.tags.join("、") || "无")}</dd>
         <dt>互动</dt><dd>${esc(metrics || "无")}</dd>
         ${post.kind === "video" ? `<dt>音视频</dt><dd>${post.media ? `<code>${esc(post.media_path)}</code>` : "没有下载"}</dd>` : ""}
-        <dt>打包</dt><dd>${post.packed_in ? esc(post.packed_in) + (post.changed_after_pack ? "（打包后作者修改过）" : "") : "未打包"}</dd>
+        <dt>打包</dt><dd>${post.packed_in ? esc(post.packed_in) + (post.changed_after_pack ? "（打包后作者修改过）" : "") : "未打包"}${post.disposition ? `（${esc(post.disposition_title)}）` : ""}</dd>
         <dt>帖子键</dt><dd><code>${esc(post.key)}</code></dd>
       </dl>
       <div class="drawer-actions">
         <a class="btn" href="${esc(post.open_url)}" target="_blank" rel="noopener noreferrer">打开原帖</a>
         <button class="btn ghost" data-action="copy" data-text="${esc(post.url)}">复制链接</button>
-        ${post.can_download_media && !post.media && !post.packed_in ? `<button class="btn" data-action="download-media" data-platform="${esc(post.platform)}" data-url="${esc(post.url)}">下载音视频</button>` : ""}
-        ${post.packed_in ? "" : `<button class="btn ${state.selected.has(post.key) ? "" : "primary"}" data-action="toggle-select" data-key="${esc(post.key)}" data-refresh="drawer">${state.selected.has(post.key) ? "移出待打包" : "加入待打包"}</button>`}
+        ${post.can_download_media && !post.media && !handled(post) ? `<button class="btn" data-action="download-media" data-platform="${esc(post.platform)}" data-url="${esc(post.url)}">下载音视频</button>` : ""}
+        ${handled(post) ? "" : `<button class="btn ${state.selected.has(post.key) ? "" : "primary"}" data-action="toggle-select" data-key="${esc(post.key)}" data-refresh="drawer">${state.selected.has(post.key) ? "移出待打包" : "加入待打包"}</button>`}
       </div>`, key);
   } catch (error) {
     closeDrawer();
@@ -732,6 +748,10 @@ function packImport(p) {
   return p.imported >= p.posts
     ? `<span class="pill text" title="这个包的帖子都已经在采集题库里">已全部导入</span>`
     : `<span class="pill" title="这些帖子的链接还不在采集题库里">待导入 ${p.posts - p.imported} 篇</span>`;
+}
+
+function handled(p) {
+  return Boolean(p.packed_in || p.disposition);
 }
 
 async function renderPacks() {
@@ -1208,7 +1228,7 @@ document.addEventListener("click", (event) => {
     "filter-label": () => { state.posts.label = target.dataset.label; renderPosts(); },
     "filter-packed": () => { state.posts.packed = target.dataset.packed; renderPosts(); },
     "filter-platform": () => { state.posts.platform = target.dataset.platform; renderPosts(); },
-    "select-all": () => { state.posts.data.posts.filter((p) => !p.packed_in).forEach((p) => state.selected.add(p.key)); renderPosts(); },
+    "select-all": () => { state.posts.data.posts.filter((p) => !handled(p)).forEach((p) => state.selected.add(p.key)); renderPosts(); },
     "clear-selection": () => { state.selected.clear(); renderPosts(); },
     "pack-selected": packSelected,
     "open-pack": () => openPack(target.dataset.id),

@@ -80,9 +80,18 @@ PLATFORMS = {
 
 
 def awaiting_download(record: PostRecord) -> bool:
-    """A video screening flagged as an interview recording whose audio and video are not downloaded yet."""
+    """A video screening flagged as an interview recording whose audio and video are not downloaded yet.
+
+    A post recorded as imported by hand or not to be imported is not waiting for anything.
+    """
     spec = PLATFORMS.get(record.post.platform)
-    return bool(spec and spec.recordings and not record.post.media and is_recording(record.label_reasons))
+    return bool(
+        spec
+        and spec.recordings
+        and not record.post.media
+        and not record.disposition
+        and is_recording(record.label_reasons)
+    )
 
 
 def tool_dirs(ffmpeg: str) -> list[Path]:

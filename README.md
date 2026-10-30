@@ -82,9 +82,10 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake / m
 也就是说，除了扫码登录和交给 Agent 的抽题、答案两步，其余都是一条命令。还没打通的地方：
 
 - 素材包有没有导入题库：`gleaner imports` 向 Interview Bank 的 `sources` 命令要来题库已有的来源，按链接对照帖子，
-  列出还在等导入的素材包（要装有 `sources` 命令的 Interview Bank）。没经过素材包、手工导入的帖子会顺手记成「手工导入」，
-  以后不会再打包，也不会再自动下载它的录音；`gleaner auto` 每次运行都会先做这一步。
-  Interview Bank 里没有提交过的帖子（例如抽题时发现没有题、或者根本没导）也会显示成「还没进题库」，要不要补由你判断。
+  列出还在等导入的素材包（要装有 `sources` 命令的 Interview Bank；`doctor` 会检查它有没有 Gleaner 用到的命令）。
+  没经过素材包、手工导入的帖子会顺手记成「手工导入」，以后不会再打包，也不会再自动下载它的录音，`gleaner auto`
+  每次运行都会先做这一步。抽题时发现没有题、或者根本没导的帖子会显示成「还没进题库」；决定不导入的用
+  `gleaner imports --skip <帖子键>` 记下，手工导入的用 `--mark`，记错了用 `--clear`。
 - 登录过期要回来扫码：`gleaner auto` 遇到要扫码的平台会跳过并写明原因（退出码 3），手动运行一次 `gleaner crawl <平台>` 扫码即可。
 
 ### 一条命令走完：抓取到打包（`gleaner auto`）
@@ -122,6 +123,17 @@ gleaner auto               # 增量抓取各平台 → 下载新的 B 站面试�
 :: Windows：每天 09:30（在命令提示符里运行一次即可创建）
 schtasks /Create /SC DAILY /ST 09:30 /TN Gleaner /TR "cmd /c cd /d C:\path\to\Gleaner && .venv\Scripts\gleaner --workspace workspace auto --quiet >> workspace\auto.log 2>&1"
 ```
+
+**放到云端服务器定时运行**要先想清楚三件事（没在云服务器上验证过，以下是 MediaCrawler 的工作方式决定的）：
+
+- 牛客不登录、不需要浏览器，最适合放云端；小红书、抖音、B 站、知乎要用 Chrome 扫码登录，云服务器没有桌面，
+  第一次登录（和过期后重新登录）得在能看到二维码的机器上做，登录状态在 `MediaCrawler/browser_data/` 里，和那台机器绑定。
+- 机房 IP 抓这些平台更容易被风控；`gleaner auto` 遇到验证或二维码会停下，不会绕过。
+- 转写录音要用 faster-whisper（`large-v3-turbo` 约需 3GB 内存、一小时录音转十几分钟），内存小的服务器跑不动。
+  可以只在云端跑 `--platform nowcoder`（加 `--no-media`），其余平台和转写留在本机。
+
+另外同一份数据库只能在一台机器上抓（SQLite 没有合并工具）；云端和本机各抓一部分的话，要换着用时整份 `workspace/` 拷过去。
+网页概览的「最近一次自动运行」读的是 `workspace/last-auto.json`，所以它显示的是这份工作区上最近一次 `gleaner auto`。
 
 ## 环境要求
 
@@ -206,7 +218,7 @@ B 站上有人把自己的真实面试录下来发成视频，题都在声音里
 ```bash
 gleaner media --dry-run                 # 看看哪些视频会下载：标成录音、还没下载、也没打包的
 gleaner media                           # 一个接一个下载（半小时的录音可能要十几分钟）
-gleaner media bili:<av 号>               # 或者只下载指定的视频；也可以 gleaner crawl bili --url <链接> --media
+gleaner media bili:<av 号>               # 或者只下载指定的视频；要先 `gleaner crawl bili --url <链接>` 把帖子读进来
 gleaner pack --key bili:<av 号>          # 打包时用 ffmpeg 提取单声道音频并做响度均衡，生成 audio.flac
 ```
 
@@ -260,7 +272,7 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | `init` | 创建工作区：`gleaner.toml`、`gleaner.db`、`runs/`、`packs/` |
 | `setup [部分…]` | 创建工作区并装好 MediaCrawler（含补丁）、Interview Bank 与采集题库、转写工具；部分是 `mediacrawler` `bank` `media`，不写就全装；`--no-model` 不下载转写模型 |
 | `doctor` | 检查 MediaCrawler 目录、启动命令和补丁、默认关键词、`ibank.py`、采集题库、导入用的 Python 版本、ffmpeg 和转写用的 Python |
-| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；搜索默认增量，`--full` 不限发布时间；B 站加 `--media` 同时下载音视频 |
+| `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；搜索默认增量，`--full` 不限发布时间 |
 | `auto` | 增量抓取各平台 → 下载新的 B 站面试录音 → 打包，遇到要扫码的平台就跳过；`--dry-run` 只列出计划，`--platform`、`--no-media`、`--no-pack`、`--login`、`--full`、`--force`，见上文 |
 | `media [key…]` | 下载 B 站面试录音的音视频；不写帖子键就下载初筛标成录音、还没下载也没打包的视频；`--dry-run` 只列出 |
 | `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
@@ -268,10 +280,8 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | `list` / `show` | 查看帖子、标签和初筛理由；`list --platform` 按平台筛选 |
 | `label <key> <label>` | 人工改标签，以后的初筛不会覆盖 |
 | `pack` | 打包（默认只打 `candidate` 且没打过包的帖子；还没下载的录音先留着） |
-| `imports` | 对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；手工导入的帖子顺便记下；`--dry-run` 只列出 |
-| `skip-import <key…>` | 记下不打算导入题库的帖子（已打过包的也行）：不再算「还在等导入」 |
+| `imports` | 对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；`--mark`、`--skip`、`--clear` 记下手工导入、不打算导入的帖子或去掉记录；`--dry-run` 只列出 |
 | `glossary` | 列出转写录音时常被听错的术语（内置的加上 `[glossary] extra`）；有录音的素材包的 HANDOFF.md 里也附这张表 |
-| `mark-imported <key…>` | 记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音 |
 | `web` | 打开本机网页控制台（`--port` 换端口，`--no-open` 不自动打开浏览器） |
 | `stats` / `runs` | 统计与抓取记录 |
 

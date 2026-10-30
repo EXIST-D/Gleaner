@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gleaner import __version__
-from gleaner.auto import chosen_platforms, outcome_lines, run_auto
+from gleaner.auto import chosen_platforms, ensure_not_running, outcome_lines, run_auto
 from gleaner.bank import BankReader
 from gleaner.checks import environment_checks
 from gleaner.config import (
@@ -22,8 +22,8 @@ from gleaner.errors import GleanerError
 from gleaner.glossary import entries as glossary_entries
 from gleaner.imports import sync_imports
 from gleaner.installer import PARTS, Installer, make_run
-from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import DEFAULT_LIMIT, MANUAL_IMPORT, NOT_IMPORTING, build_pack, packable
+from gleaner.models import DISPOSITIONS, LABEL_TITLES, LABELS, MANUAL, PLATFORMS, SKIPPED, PostRecord
+from gleaner.packer import DEFAULT_LIMIT, build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     crawl,
@@ -102,9 +102,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--full", action="store_true", help="不做增量：不限发布时间，以前保存过的帖子也重新读取"
     )
     crawling.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
-    crawling.add_argument(
-        "--media", action="store_true", help="同时下载视频，用来转写面试录音（只支持 B 站，配合 --url）"
-    )
 
     auto = command(
         "auto",
@@ -171,29 +168,22 @@ def build_parser() -> argparse.ArgumentParser:
     imports = command(
         "imports",
         cmd_imports,
-        "对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；手工导入的帖子顺便记下",
+        "对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；也用来记下手工导入或不打算导入的帖子",
     )
-    imports.add_argument("--dry-run", action="store_true", help="只列出，不把手工导入的帖子记进数据库")
-
-    imported_by_hand = command(
-        "mark-imported",
-        cmd_mark_imported,
-        "记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音",
+    imports.add_argument(
+        "--mark", nargs="+", metavar="KEY", help="记下这些帖子是手工导入题库的（不再打包和下载）"
     )
-    imported_by_hand.add_argument("key", nargs="+", help="帖子键，可以写多个")
+    imports.add_argument("--skip", nargs="+", metavar="KEY", help="记下不打算导入这些帖子（打过包的也行）")
+    imports.add_argument("--clear", nargs="+", metavar="KEY", help="去掉上面两种记录")
+    imports.add_argument(
+        "--dry-run", action="store_true", help="只列出，不记录（对 --mark、--skip、--clear 也一样）"
+    )
 
     command(
         "glossary",
         cmd_glossary,
         "列出转写录音时常被听错的术语（内置的加上 gleaner.toml 里 [glossary] extra 的）",
     )
-
-    skipped = command(
-        "skip-import",
-        cmd_skip_import,
-        "记下不打算导入题库的帖子（已经打过包的也可以）：不再算「还在等导入」",
-    )
-    skipped.add_argument("key", nargs="+", help="帖子键，可以写多个")
 
     web = command("web", cmd_web, "打开本机网页控制台：概览、可视化抓取、看帖改标签、打包")
     web.add_argument("--port", type=int, default=8765, help="端口，默认 8765；只监听 127.0.0.1")
@@ -272,14 +262,13 @@ def cmd_doctor(args) -> int:
 
 def cmd_crawl(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
+    ensure_not_running(config.workspace)
     if args.max_notes is not None and not 1 <= args.max_notes <= MAX_NOTES_CAP:
         raise GleanerError(f"--max-notes 必须在 1 到 {MAX_NOTES_CAP} 之间")
     keywords = validate_keywords(args.keyword) or list(config.keywords)
     targets = [value.strip() for value in args.url if value.strip()]
     platform = args.platform
-    if args.media and not targets:
-        raise GleanerError("--media 要配合 --url 指定视频；按初筛结果下载录音用 gleaner media")
-    fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json), media=args.media)
+    fetcher = fetcher_for(config, platform, echo=not (args.quiet or args.json))
     with Store.open(config.workspace) as store:
         if not args.json and not targets:
             planned = planned_notes(
@@ -307,7 +296,6 @@ def cmd_crawl(args) -> int:
             max_notes=args.max_notes,
             force=args.force,
             now=utc_now(),
-            media=args.media,
             incremental=not args.full,
         )
     _emit(args, outcome.as_dict(), _summary_text(outcome))
@@ -375,6 +363,7 @@ def _auto_plan(store: Store, config, platforms: list[str], *, download: bool, fo
 
 def cmd_media(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
+    ensure_not_running(config.workspace)
     with Store.open(config.workspace) as store:
         records = recordings_to_download(store, args.key or None)
         if args.dry_run or not records:
@@ -465,6 +454,7 @@ def cmd_label(args) -> int:
 
 def cmd_pack(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
+    ensure_not_running(config.workspace)
     if args.limit < 1:
         raise GleanerError("--limit 至少为 1")
     bank = args.bank.expanduser().resolve() if args.bank else None
@@ -487,9 +477,29 @@ def cmd_pack(args) -> int:
 def cmd_imports(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
     reader = BankReader(config.handoff)
+    changes = {MANUAL: args.mark or [], SKIPPED: args.skip or [], None: args.clear or []}
+    wanted = [key for keys in changes.values() for key in keys]
+    text: list[str] = []
     with Store.open(config.workspace) as store:
-        report = sync_imports(store, reader.held(), now=utc_now(), adopt=not args.dry_run)
-    text = [f"题库里已有 {report.holding} 篇 Gleaner 的帖子，共 {report.questions} 道题"]
+        missing = (
+            sorted(set(wanted) - {record.post.key for record in store.posts(keys=wanted)}) if wanted else []
+        )
+        if missing:
+            raise GleanerError(f"找不到帖子：{', '.join(missing)}")
+        for disposition, keys in changes.items():
+            if keys:
+                title = DISPOSITIONS[disposition] if disposition else "去掉记录"
+                text.append(f"{'会记为' if args.dry_run else '已记为'}{title}：{'、'.join(keys)}")
+                if not args.dry_run:
+                    store.set_disposition(keys, disposition, now=iso(utc_now()))
+        try:
+            report = sync_imports(store, reader.held(), now=utc_now(), adopt=not args.dry_run)
+        except GleanerError as exc:
+            if not wanted:
+                raise
+            data = {"ok": True, "changed": {str(k): v for k, v in changes.items() if v}, "compared": False}
+            return _emit(args, data, [*text, f"没能对照题库：{exc}"])
+    text.append(f"题库里已有 {report.holding} 篇 Gleaner 的帖子，共 {report.questions} 道题")
     if report.adopted:
         verb = "会记下" if args.dry_run else "已记下"
         text.append(
@@ -499,23 +509,8 @@ def cmd_imports(args) -> int:
         text.append(f"素材包 {pack}：{len(keys)}/{report.pack_sizes[pack]} 篇还没进题库：{'、'.join(keys)}")
     if not report.waiting:
         text.append("没有等待导入的素材包")
-    return _emit(args, {"ok": True, **report.as_dict(), "dry_run": args.dry_run}, text)
-
-
-def cmd_mark_imported(args) -> int:
-    config = load_config(resolve_workspace(args.workspace))
-    with Store.open(config.workspace) as store:
-        records = store.posts(keys=args.key)
-        missing = sorted(set(args.key) - {record.post.key for record in records})
-        if missing:
-            raise GleanerError(f"找不到帖子：{', '.join(missing)}")
-        fresh = [record.post.key for record in records if not record.packed_in]
-        store.mark_packed(fresh, pack_id=MANUAL_IMPORT, now=iso(utc_now()))
-    skipped = [record.post.key for record in records if record.packed_in]
-    text = [f"已记下 {len(fresh)} 篇为{MANUAL_IMPORT}：{'、'.join(fresh) or '无'}"]
-    if skipped:
-        text.append(f"{len(skipped)} 篇本来就打过包，没改：{'、'.join(skipped)}")
-    return _emit(args, {"ok": True, "marked": fresh, "unchanged": skipped}, text)
+    data = {"ok": True, **report.as_dict(), "dry_run": args.dry_run, "compared": True}
+    return _emit(args, data, text)
 
 
 def cmd_glossary(args) -> int:
@@ -524,19 +519,6 @@ def cmd_glossary(args) -> int:
     data = {"ok": True, "entries": [item.__dict__ for item in items]}
     text = [f"{item.heard} → {item.correct}" + (f"（{item.note}）" if item.note else "") for item in items]
     return _emit(args, data, text)
-
-
-def cmd_skip_import(args) -> int:
-    config = load_config(resolve_workspace(args.workspace))
-    with Store.open(config.workspace) as store:
-        records = store.posts(keys=args.key)
-        missing = sorted(set(args.key) - {record.post.key for record in records})
-        if missing:
-            raise GleanerError(f"找不到帖子：{', '.join(missing)}")
-        changed = [record.post.key for record in records if record.packed_in != NOT_IMPORTING]
-        store.mark_packed(changed, pack_id=NOT_IMPORTING, now=iso(utc_now()))
-    text = [f"已记下 {len(changed)} 篇为{NOT_IMPORTING}：{'、'.join(changed) or '无'}"]
-    return _emit(args, {"ok": True, "marked": changed}, text)
 
 
 def cmd_web(args) -> int:
@@ -632,13 +614,18 @@ def _record_brief(record: PostRecord) -> dict:
         "images": len(post.images),
         "media": post.media,
         "packed_in": record.packed_in,
+        "disposition": record.disposition,
     }
 
 
 def _record_line(record: PostRecord) -> str:
     post = record.post
     date = china_date(post.published_at) or "日期未知"
-    flags = ("  [有音视频]" if post.media else "") + ("  [已打包]" if record.packed_in else "")
+    flags = (
+        ("  [有音视频]" if post.media else "")
+        + ("  [已打包]" if record.packed_in else "")
+        + (f"  [{DISPOSITIONS[record.disposition]}]" if record.disposition else "")
+    )
     return f"{post.key}  {record.label or '未初筛':<10} {date}  {post.kind:<5} {post.title[:40]}{flags}"
 
 

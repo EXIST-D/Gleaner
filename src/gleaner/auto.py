@@ -7,6 +7,7 @@ still runs; only the person's QR code scan and the Agent's import are left out.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Callable, Iterator
@@ -36,6 +37,7 @@ from gleaner.store import Store
 from gleaner.timeutil import utc_now
 
 LOCK_NAME = "auto.lock"
+LAST_NAME = "last-auto.json"
 STALE_LOCK_SECONDS = 12 * 3600
 """A lock older than this is left over from a crashed run; a run with a hundred-minute download is far shorter."""
 AUTO_PLATFORMS = ("nowcoder", *mediacrawler.PLATFORMS)
@@ -97,6 +99,34 @@ def chosen_platforms(config: Config, requested: list[str] | None = None) -> list
     return platforms
 
 
+def ensure_not_running(workspace: Path) -> None:
+    """Manual crawls, downloads and packs must not overlap a `gleaner auto` run: they would pack the same posts twice."""
+    try:
+        age = time.time() - (workspace / LOCK_NAME).stat().st_mtime
+    except FileNotFoundError:
+        return
+    if age < STALE_LOCK_SECONDS:
+        raise GleanerError(
+            f"gleaner auto 正在运行（{int(age // 60)} 分钟前开始），等它结束再手动抓取、下载或打包；"
+            f"确认没有在运行的话可以删掉 {workspace / LOCK_NAME}"
+        )
+
+
+def last_auto(workspace: Path) -> dict | None:
+    """The summary of the latest automatic run, for the web console; None before the first run."""
+    try:
+        return json.loads((workspace / LAST_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_last(workspace: Path, started: datetime, finished: datetime, outcome: AutoOutcome) -> None:
+    summary = {"started_at": started.isoformat(), "finished_at": finished.isoformat(), **outcome.as_dict()}
+    temporary = workspace / f"{LAST_NAME}.tmp"
+    temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, workspace / LAST_NAME)
+
+
 @contextmanager
 def run_lock(workspace: Path) -> Iterator[None]:
     """One automatic run at a time: two runs would pack the same posts twice and double count their questions."""
@@ -152,6 +182,7 @@ def run_auto(
     if not config.keywords:
         raise GleanerError("没有关键词：在 gleaner.toml 的 keywords 里配置")
     outcome = AutoOutcome()
+    started = clock()
 
     def factory(platform: str, **options) -> Fetcher:
         return fetcher_factory(config, platform, echo=echo, unattended=not attended, **options)
@@ -179,6 +210,7 @@ def run_auto(
             if latest:
                 latest.adopted = outcome.imports.adopted
                 outcome.imports = latest
+        _write_last(config.workspace, started, clock(), outcome)
     return outcome
 
 

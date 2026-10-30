@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from gleaner import __version__
+from gleaner.auto import ensure_not_running, last_auto
 from gleaner.bank import (
     ANSWER_STATUSES,
     INTERVIEW_TYPES,
@@ -28,8 +29,8 @@ from gleaner.checks import environment_checks
 from gleaner.config import MAX_NOTES_CAP, Config, load_config
 from gleaner.devnotes import add_feedback, dev_status
 from gleaner.errors import GleanerError
-from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import OUTSIDE_PACKS, build_pack, packable
+from gleaner.models import DISPOSITIONS, LABEL_TITLES, LABELS, PLATFORMS, PostRecord
+from gleaner.packer import build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     default_max_notes,
@@ -350,6 +351,7 @@ class WebApp:
             "workspace": str(self.workspace),
             "stats": stats,
             "unpacked_candidates": unpacked,
+            "auto": last_auto(self.workspace),
             "labels": [{"id": label, "title": LABEL_TITLES[label]} for label in LABELS],
             "checkpoints": [
                 {
@@ -454,7 +456,7 @@ class WebApp:
     def packs(self, _query: dict) -> dict:
         held = self._held()
         with Store.open(self.workspace) as store:
-            settled = {r.post.key for r in store.posts(packed=True) if r.packed_in in OUTSIDE_PACKS}
+            settled = {r.post.key for r in store.posts() if r.disposition}
         found = []
         for manifest_path in sorted((self.workspace / "packs").glob("pack-*/manifest.json"), reverse=True):
             try:
@@ -513,6 +515,7 @@ class WebApp:
 
     def _post(self, path: str, payload: dict) -> Response:
         if path == "/api/crawl":
+            ensure_not_running(self.workspace)
             job = self.jobs.start(
                 platform=str(payload.get("platform") or "xhs"),
                 keywords=_strings(payload.get("keywords")),
@@ -554,6 +557,7 @@ class WebApp:
                 raise GleanerError("请先选择要打包的帖子")
             config = load_config(self.workspace)
             with Store.open(self.workspace) as store:
+                ensure_not_running(self.workspace)
                 result = build_pack(store, config, now=utc_now(), keys=keys)
             return json_response({"ok": True, "pack": result.as_dict()})
         if path == "/api/feedback":
@@ -589,6 +593,8 @@ class WebApp:
             "can_download_media": bool(spec and spec.recordings and post.kind == "video"),
             "likes": post.metrics.get("liked_count"),
             "packed_in": record.packed_in,
+            "disposition": record.disposition,
+            "disposition_title": DISPOSITIONS.get(record.disposition or "", ""),
             "excerpt": post.body[:90],
         }
 

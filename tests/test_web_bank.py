@@ -220,9 +220,7 @@ class BankPageTest(WorkspaceTestCase):
         (pack,) = data["packs"]
         self.assertEqual((pack["posts"], pack["imported"]), (2, 1))
         with Store.open(self.ws) as store:
-            from gleaner.packer import NOT_IMPORTING
-
-            store.mark_packed(["xhs:cc03"], pack_id=NOT_IMPORTING, now="2026-10-27T00:00:00+00:00")
+            store.set_disposition(["xhs:cc03"], "skipped", now="2026-10-27T00:00:00+00:00")
         self.assertEqual(
             self.get("/api/packs")[1]["packs"][0]["imported"], 2, "a post not to be imported is settled"
         )
@@ -239,6 +237,20 @@ class BankPageTest(WorkspaceTestCase):
             import_export(store, load_config(self.ws), export, now=NOW)
             self.assertEqual(store.get("bili:1150000002").label, "candidate")
         self.assertEqual(self.get("/api/overview")[1]["unpacked_candidates"], before)
+
+    def test_overview_carries_the_latest_automatic_run(self):
+        self.assertIsNone(self.get("/api/overview")[1]["auto"])
+        (self.ws / "last-auto.json").write_text(
+            json.dumps(
+                {
+                    "finished_at": "2026-10-30T08:00:00+00:00",
+                    "ok": True,
+                    "steps": [{"kind": "pack", "status": "ok"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.get("/api/overview")[1]["auto"]["steps"][0]["kind"], "pack")
 
     def test_list_summary_topics_and_exclusions(self):
         _, data = self.get("/api/bank")

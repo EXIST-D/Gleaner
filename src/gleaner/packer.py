@@ -21,11 +21,6 @@ from gleaner.timeutil import china_date, iso, new_id
 PACK_SCHEMA = "gleaner.pack"
 PACK_SCHEMA_VERSION = 1
 DEFAULT_LIMIT = 20
-MANUAL_IMPORT = "手工导入"
-"""`packed_in` of a post imported into the bank without a pack: it is never packed or downloaded again."""
-NOT_IMPORTING = "不导入"
-"""`packed_in` of a post the user decided not to import (even if it was packed): it no longer counts as waiting."""
-OUTSIDE_PACKS = (MANUAL_IMPORT, NOT_IMPORTING)
 
 
 @dataclass(frozen=True)
@@ -86,9 +81,11 @@ def build_pack(
         missing = sorted(set(keys) - {record.post.key for record in records})
         if missing:
             raise GleanerError(f"找不到帖子：{', '.join(missing)}")
-        already = [record.post.key for record in records if record.packed_in]
+        already = [record.post.key for record in records if record.packed_in or record.disposition]
         if already:
-            raise GleanerError(f"这些帖子已经打过包，重复导入会让题目重复计数：{', '.join(already)}")
+            raise GleanerError(
+                f"这些帖子已经打过包或已经记为手工导入、不导入，重复导入会让题目重复计数：{', '.join(already)}"
+            )
     else:
         records, held = packable(store, labels=labels, limit=limit)
     if not records:

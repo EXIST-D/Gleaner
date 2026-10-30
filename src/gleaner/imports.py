@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from gleaner.bank import Held
-from gleaner.packer import MANUAL_IMPORT, OUTSIDE_PACKS
+from gleaner.models import MANUAL
 from gleaner.store import Store
 from gleaner.timeutil import iso
 
@@ -46,12 +46,12 @@ def sync_imports(store: Store, held: dict[str, Held], *, now: datetime, adopt: b
         if known:
             report.holding += 1
             report.questions += known.questions
-            if not record.packed_in:
+            if not record.packed_in and not record.disposition:
                 report.adopted.append(record.post.key)
-        if record.packed_in and record.packed_in not in OUTSIDE_PACKS:
+        if record.packed_in and not record.disposition:
             report.pack_sizes[record.packed_in] = report.pack_sizes.get(record.packed_in, 0) + 1
             if not known:
                 report.waiting.setdefault(record.packed_in, []).append(record.post.key)
     if adopt and report.adopted:
-        store.mark_packed(report.adopted, pack_id=MANUAL_IMPORT, now=iso(now))
+        store.set_disposition(report.adopted, MANUAL, now=iso(now))
     return report

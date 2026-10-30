@@ -154,9 +154,8 @@ class CliTest(WorkspaceTestCase):
         self.assertTrue(self.json("show", "bili:1150000002")["post"]["media"])
         self.assertIn("没有要下载", self.call("media")[1])
 
-        code, _, err = self.call("crawl", "bili", "--media")
-        self.assertEqual(code, 1)
-        self.assertIn("--url", err)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["--workspace", str(self.workspace), "crawl", "bili", "--media"])
 
     def test_auto_dry_run_lists_what_it_would_do(self):
         self.call("init")
@@ -210,20 +209,19 @@ class CliTest(WorkspaceTestCase):
         self.assertTrue(json.loads(out)["ok"])
         self.assertEqual((run.call_args.kwargs["pack"], run.call_args.kwargs["download"]), (False, False))
 
-    def test_mark_imported_keeps_a_post_out_of_packs_and_downloads(self):
+    def test_marking_a_post_imported_keeps_it_out_of_packs_and_downloads(self):
         self.call("init")
         source = write_records(self.workspace.parent / "bili-data", "bili", [BILI_VIDEO, BILI_RECORDING])
         self.json("import", str(source))
-        marked = self.json("mark-imported", "bili:1150000002")
-        self.assertEqual((marked["marked"], marked["unchanged"]), (["bili:1150000002"], []))
+        marked = self.json("imports", "--mark", "bili:1150000002")
+        self.assertEqual(marked["changed"], {"manual": ["bili:1150000002"]})
         self.assertEqual(self.json("media", "--dry-run")["posts"], [])
-        self.assertEqual(self.json("show", "bili:1150000002")["post"]["packed_in"], "手工导入")
+        shown = self.json("show", "bili:1150000002")["post"]
+        self.assertEqual((shown["disposition"], shown["packed_in"]), ("manual", None))
         self.assertNotIn(
             "bili:1150000002", [post["key"] for post in self.json("list", "--unpacked")["posts"]]
         )
-        again = self.json("mark-imported", "bili:1150000002", "bili:1150000001")
-        self.assertEqual((again["marked"], again["unchanged"]), (["bili:1150000001"], ["bili:1150000002"]))
-        code, _, err = self.call("mark-imported", "bili:404")
+        code, _, err = self.call("imports", "--mark", "bili:404")
         self.assertEqual(code, 1)
         self.assertIn("找不到帖子：bili:404", err)
 
@@ -254,6 +252,24 @@ class CliTest(WorkspaceTestCase):
         checks = {check["name"]: check for check in json.loads(self.call("doctor", "--json")[1])["checks"]}
         self.assertFalse(checks["auto"]["ok"])
         self.assertIn("不认识 weibo", checks["auto"]["detail"])
+
+    def test_doctor_checks_that_ibank_offers_the_commands_gleaner_uses(self):
+        import sys
+
+        from gleaner.checks import IBANK_COMMANDS, ibank_commands_check
+        from tests.support import make_config
+
+        def check(commands):
+            fake = self.workspace / f"ibank-{len(commands)}.py"
+            fake.write_text(f"print('usage: ibank.py {{{','.join(commands)}}} ...')\n", encoding="utf-8")
+            config = make_config(self.workspace, handoff={"ibank": str(fake), "python": sys.executable})
+            return ibank_commands_check(config)
+
+        self.assertTrue(check(list(IBANK_COMMANDS) + ["web"]).ok)
+        old = check([name for name in IBANK_COMMANDS if name != "sources"])
+        self.assertFalse(old.ok)
+        self.assertIn("缺少 sources", old.detail)
+        self.assertFalse(ibank_commands_check(make_config(self.workspace)).ok)
 
     def test_workspace_from_environment(self):
         out = io.StringIO()

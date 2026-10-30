@@ -11,9 +11,17 @@ from gleaner.errors import GleanerError
 from gleaner.models import LABELS, Post, PostRecord
 
 DB_NAME = "gleaner.db"
-SCHEMA_VERSION = 2
-_UPGRADES = {2: "ALTER TABLE posts ADD COLUMN media TEXT"}
-"""Statement that brings a workspace from the previous version to the key's version."""
+SCHEMA_VERSION = 3
+_UPGRADES: dict[int, tuple[str, ...]] = {
+    2: ("ALTER TABLE posts ADD COLUMN media TEXT",),
+    3: (
+        "ALTER TABLE posts ADD COLUMN disposition TEXT",
+        "UPDATE posts SET disposition = 'manual', packed_in = NULL WHERE packed_in = '手工导入'",
+        "UPDATE posts SET disposition = 'skipped', packed_in = NULL WHERE packed_in = '不导入'",
+    ),
+}
+"""Statements that bring a workspace from the previous version to the key's version (3 turns the
+`packed_in` values that GLN-27 and GLN-30 used for hand-imported and skipped posts into `disposition`)."""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -61,6 +69,7 @@ CREATE TABLE IF NOT EXISTS posts (
     packed_at TEXT,
     changed_after_pack INTEGER NOT NULL DEFAULT 0,
     media TEXT,
+    disposition TEXT,
     UNIQUE (platform, post_id)
 );
 CREATE INDEX IF NOT EXISTS posts_label ON posts (label);
@@ -122,7 +131,8 @@ class Store:
             if version is not None and version > SCHEMA_VERSION:
                 raise GleanerError("工作区由更新版本的 Gleaner 创建，请先升级 Gleaner")
             for target in range((version or SCHEMA_VERSION) + 1, SCHEMA_VERSION + 1):
-                self._db.execute(_UPGRADES[target])
+                for statement in _UPGRADES[target]:
+                    self._db.execute(statement)
             self._db.executescript(_SCHEMA)
             self._db.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -292,7 +302,7 @@ class Store:
         if packed is True:
             clauses.append("packed_in IS NOT NULL")
         elif packed is False:
-            clauses.append("packed_in IS NULL")
+            clauses.append("packed_in IS NULL AND disposition IS NULL")
         if keys is not None:
             keys = list(keys)
             clauses.append(f"key IN ({', '.join('?' for _ in keys)})")
@@ -322,6 +332,14 @@ class Store:
             self._db.executemany(
                 "UPDATE posts SET packed_in = ?, packed_at = ?, changed_after_pack = 0 WHERE key = ?",
                 [(pack_id, now, key) for key in keys],
+            )
+
+    def set_disposition(self, keys: Iterable[str], disposition: str | None, *, now: str) -> None:
+        """Record that posts were imported by hand or will not be imported (None clears it)."""
+        with self._db:
+            self._db.executemany(
+                "UPDATE posts SET disposition = ?, packed_at = COALESCE(packed_at, ?) WHERE key = ?",
+                [(disposition, now, key) for key in keys],
             )
 
     # Checkpoints
@@ -421,4 +439,5 @@ def _record(row: sqlite3.Row) -> PostRecord:
         packed_in=row["packed_in"],
         packed_at=row["packed_at"],
         changed_after_pack=bool(row["changed_after_pack"]),
+        disposition=row["disposition"],
     )

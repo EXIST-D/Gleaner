@@ -18,14 +18,14 @@
 | `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本和逐版升级 |
 | `screening.py` | 可解释的规则初筛；标出 B 站面试录音 |
 | `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数、抓取间隔和增量搜索的起点；挑出要下载的录音 |
-| `auto.py` | `gleaner auto`：按顺序增量抓取各平台 → 下载标成录音的 B 站视频 → 打包，每一步的结果记成 `Step`，一步失败不影响下一步；`auto.lock` 保证同一时间只有一次自动运行 |
+| `auto.py` | `gleaner auto`：按顺序增量抓取各平台 → 下载标成录音的 B 站视频 → 打包，每一步的结果记成 `Step`，一步失败不影响下一步；`auto.lock` 保证同一时间只有一次自动运行（手动的 `crawl`、`media`、`pack` 和网页的抓取、打包也看这把锁）；每次结束写 `last-auto.json` 供网页概览显示 |
 | `packer.py` | 生成素材包与 `HANDOFF.md`；默认选帖时把还没下载的录音留下（`packable`） |
 | `audio.py` | 用 ffmpeg 把录音视频转成单声道、响度均衡的 `audio.flac`；打包器接受替换的提取函数，测试不需要 ffmpeg |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor`、`setup` 和网页共用；补丁用 `git apply --reverse --check` 判断是否已打上 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy`、`sources` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告；`held()` 给出每个来源链接在题库里有几个来源、几道题 |
 | `glossary.py` | 转写常被听错的术语表（内置 + `[glossary] extra`），写进有录音的素材包的 HANDOFF.md；转写文本留在题库里不改写，由 Agent 对照表改错并写进 `correction` |
-| `imports.py` | 把帖子和题库已有的来源按链接对照：手工导入的帖子记成「手工导入」，列出还在等导入的素材包 |
+| `imports.py` | 把帖子和题库已有的来源按链接对照：手工导入的帖子记成 `disposition = manual`，列出还在等导入的素材包；`--mark/--skip/--clear` 改记录 |
 | `devnotes.py` | 进度页的数据：工作区的 `开发进度.md`（或开发手册的「当前状态」）、CHANGELOG 的「未发布」、`git log` 和未提交/未推送数；意见追加到工作区的 `意见.md` |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
 | `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止（MediaCrawler 结束子进程，牛客在下一个请求前停下） |
@@ -77,7 +77,7 @@
 所以默认选帖时把它们留下（`packer.packable`），`gleaner pack --key` 明确指定时才打。
 两次自动运行重叠会把同一批帖子打两次包、让题目重复计数，所以用 `auto.lock`（`O_EXCL` 创建，12 小时后算崩溃遗留）互斥；
 没用进程号判断，因为 Windows 上 `os.kill(pid, 0)` 会结束进程。
-题库有没有这篇帖子不靠手记，而是向 Interview Bank 的只读 `sources` 命令要来已提交的来源，按链接（`source_url` 就是帖子的稳定链接）对照（`imports.py`）；`auto` 每次先对照再下载和打包。没提交过的来源（例如录音转写了还没抽题）不在列表里，所以算「没导入」。不经素材包、手工导入题库的帖子用 `mark-imported` 把 `packed_in` 记成“手工导入”，决定不导入的用 `skip-import` 记成“不导入”（已打过包的也行，之后不再算「还在等导入」），Gleaner 没有别的办法知道它们已经进了题库。
+题库有没有这篇帖子不靠手记，而是向 Interview Bank 的只读 `sources` 命令要来已提交的来源，按链接（`source_url` 就是帖子的稳定链接）对照（`imports.py`）；`auto` 每次先对照再下载和打包。没提交过的来源（例如录音转写了还没抽题）不在列表里，所以算「没导入」。不经素材包、手工导入题库的帖子用 `imports --mark` 记成 `disposition = manual`，决定不导入的用 `--skip` 记成 `skipped`（已打过包的也行，之后不再算「还在等导入」）。`disposition` 是单独的一列，不和 `packed_in`（它在哪个素材包里）混用：先前用 `packed_in` 存特殊值，网页上就会把这些帖子显示成「已打包」，Gleaner 没有别的办法知道它们已经进了题库。
 
 **失败是“降级”，不是崩溃。** 登录过期、滑块验证、超时、退出码非 0、没有产出，都记为 `degraded` 并写明原因；
 已经产出的数据照常导入。退出码 3 让脚本能区分降级和真正的错误。
@@ -146,12 +146,12 @@ Interview Bank 认不出公司时记成 `id` 为空的 `unknown`，列表不把�
 ## 数据库
 
 `gleaner.db` 由 `store.py` 管理，`meta.schema_version` 记录版本，打开更新版本创建的工作区会直接拒绝；
-旧版本的工作区打开时按 `_UPGRADES` 逐版升级（第 2 版给 `posts` 加了 `media` 列）。
+旧版本的工作区打开时按 `_UPGRADES` 逐版升级（第 2 版给 `posts` 加了 `media` 列；第 3 版加了 `disposition` 列，并把 GLN-27/30 用 `packed_in` 的特殊值记的“手工导入”“不导入”挪过去）。
 
 | 表 | 内容 |
 |---|---|
 | `runs` | 每次抓取或导入：来源、模式、参数（下载录音的运行带 `media: true`；搜索带 `incremental` 和 `since`）、状态、降级原因、计数；增量搜索的起点从这里算 |
-| `posts` | 帖子内容、图片和录音视频的路径（相对工作区）、互动数、标签与理由、打包记录 |
+| `posts` | 帖子内容、图片和录音视频的路径（相对工作区）、互动数、标签与理由、打包记录（`packed_in`）、`disposition`（手工导入或不导入） |
 | `checkpoints` | 每个关键词见过的最新发布时间，供以后做增量抓取 |
 
 ## 扩展新来源

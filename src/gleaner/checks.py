@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 
 from gleaner.audio import find_ffmpeg
@@ -51,6 +53,7 @@ def environment_checks(config: Config) -> list[Check]:
             bool(ibank and ibank.is_file()),
             str(ibank) if ibank else "没有配置 handoff.ibank",
         ),
+        ibank_commands_check(config),
         Check("bank", "采集题库", bank_ok, bank_detail),
         python_check(config.handoff.python),
         Check(
@@ -66,6 +69,51 @@ def environment_checks(config: Config) -> list[Check]:
             asr_python,
         ),
     ]
+
+
+IBANK_COMMANDS = (
+    "sources",
+    "search",
+    "show",
+    "taxonomy",
+    "export",
+    "media",
+    "media-task",
+    "media-transcribe",
+    "web-intake",
+    "ingest",
+)
+"""What Gleaner calls on Interview Bank's command line."""
+_IBANK_CACHE: dict[tuple, tuple[bool, str]] = {}
+
+
+def ibank_commands_check(config: Config) -> Check:
+    """Does the configured Interview Bank still offer every command Gleaner uses? (cached until the file changes)"""
+    title = "Interview Bank 的命令（Gleaner 用到的都要有）"
+    ibank = config.handoff.ibank
+    if not ibank or not ibank.is_file():
+        return Check("ibank_commands", title, False, "没有配置 handoff.ibank")
+    key = (str(ibank), ibank.stat().st_mtime_ns, config.handoff.python)
+    if key not in _IBANK_CACHE:
+        _IBANK_CACHE[key] = _read_ibank_commands(config.handoff.python, ibank)
+    ok, detail = _IBANK_CACHE[key]
+    return Check("ibank_commands", title, ok, detail)
+
+
+def _read_ibank_commands(python: str, ibank) -> tuple[bool, str]:
+    try:
+        done = subprocess.run(
+            [python, "-B", str(ibank), "--help"], capture_output=True, text=True, encoding="utf-8", timeout=30
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"运行不了 {ibank}：{exc}"
+    found = re.search(r"\{([a-z0-9,-]+)\}", done.stdout)
+    if done.returncode != 0 or not found:
+        return False, f"读不出 {ibank} 的命令列表（退出码 {done.returncode}）"
+    missing = [name for name in IBANK_COMMANDS if name not in found.group(1).split(",")]
+    if missing:
+        return False, f"缺少 {'、'.join(missing)}：把 Interview Bank 更新到有这些命令的版本"
+    return True, f"{len(IBANK_COMMANDS)} 个命令都在"
 
 
 def auto_check(config: Config) -> Check:

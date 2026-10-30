@@ -6,6 +6,8 @@ from gleaner.auto import (
     LOCK_NAME,
     STALE_LOCK_SECONDS,
     chosen_platforms,
+    ensure_not_running,
+    last_auto,
     run_auto,
     run_lock,
 )
@@ -245,6 +247,37 @@ class AutoTest(WorkspaceTestCase):
             (self.workspace / LOCK_NAME).write_text("", encoding="utf-8")
             with self.assertRaisesRegex(GleanerError, "还在运行"):
                 self.drive(store, {"xhs": []}, platforms=["xhs"])
+
+    def test_the_summary_of_the_latest_run_is_kept_for_the_web_console(self):
+        with Store.open(self.workspace, create=True) as store:
+            self.assertIsNone(last_auto(self.workspace))
+            self.drive(store, {"xhs": [FakeDriver(write_export)]}, platforms=["xhs"])
+        summary = last_auto(self.workspace)
+        self.assertEqual([step["kind"] for step in summary["steps"]], ["crawl", "pack"])
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["pack"]["posts"], 3)
+        self.assertLess(summary["started_at"], summary["finished_at"] + "z")
+
+
+class ManualCommandsTest(WorkspaceTestCase):
+    def test_a_fresh_lock_blocks_manual_crawls_downloads_and_packs_but_a_stale_one_does_not(self):
+        import contextlib
+        import io
+
+        from gleaner.cli import main
+
+        main(["--workspace", str(self.workspace), "init"])
+        lock = self.workspace / LOCK_NAME
+        lock.write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(GleanerError, "正在运行"):
+            ensure_not_running(self.workspace)
+        for argv in (["crawl", "nowcoder"], ["media", "--dry-run"], ["pack"]):
+            with self.subTest(argv), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(main(["--workspace", str(self.workspace), *argv]), 1)
+                self.assertIn("gleaner auto 正在运行", err.getvalue())
+        old = time.time() - STALE_LOCK_SECONDS - 60
+        os.utime(lock, (old, old))
+        ensure_not_running(self.workspace)
 
 
 class RunLockTest(WorkspaceTestCase):

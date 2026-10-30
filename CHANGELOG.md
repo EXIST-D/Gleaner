@@ -2,6 +2,14 @@
 
 ## 未发布
 
+- 整理（GLN-31）：
+  - 数据库升到第 3 版：「手工导入」「不导入」不再用 `packed_in` 存特殊值，改放单独的 `disposition` 列（升级时自动搬过去）；
+    网页帖子页对它们显示「手工导入」「不导入」，不再显示「已打包」。
+  - `mark-imported`、`skip-import` 并进 `gleaner imports`：`--mark`、`--skip`、`--clear`（`--dry-run` 只列出）。
+    去掉 `crawl --media`，下载录音只剩 `gleaner media`（和 `auto`、网页按钮）。
+  - 手动的 `crawl`、`media`、`pack` 和网页的抓取、打包遇到 `gleaner auto` 正在运行会拒绝（共用 `auto.lock`）。
+    `auto` 每次结束写 `workspace/last-auto.json`，网页概览显示「最近一次自动运行」。
+  - `doctor` 检查 Interview Bank 有没有 Gleaner 用到的 10 个命令；README 补了云端服务器定时运行要注意的事。
 - 转写术语表：新命令 `gleaner glossary` 列出转写录音时常被听错的术语（Lilis→Redis、县城→线程、麦瑟克→MySQL、
   换度→幻读 等 40 多条，取自已导入的录音），`gleaner.toml` 的 `[glossary] extra = ["听成的写法 = 正确写法"]` 追加自己的。
   有录音的素材包的 HANDOFF.md 附上这张表，Agent 改错时对照（转写文本在题库里，不改写）。

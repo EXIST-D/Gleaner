@@ -7,7 +7,7 @@ from gleaner.bank import BankReader, Held
 from gleaner.cli import main
 from gleaner.errors import GleanerError
 from gleaner.imports import sync_imports
-from gleaner.packer import MANUAL_IMPORT, NOT_IMPORTING, build_pack
+from gleaner.packer import build_pack
 from gleaner.pipeline import import_export
 from gleaner.store import Store
 from tests.support import (
@@ -129,7 +129,7 @@ class SyncTest(BankWithSources):
             self.assertEqual((report.holding, report.questions), (1, 2))
 
             report = sync_imports(store, {CC03: Held(1, 2, 2)}, now=NOW)
-            self.assertEqual(store.get("xhs:cc03").packed_in, MANUAL_IMPORT)
+            self.assertEqual(store.get("xhs:cc03").disposition, "manual")
             again = sync_imports(store, {CC03: Held(1, 2, 2), AA01: Held(1, 1, 1)}, now=NOW)
             self.assertEqual((again.adopted, again.waiting, again.holding), ([], {}, 2))
             self.assertEqual(
@@ -146,27 +146,49 @@ class SyncTest(BankWithSources):
         report = self.run_cli("imports")
         self.assertEqual((report["adopted"], report["waiting"], report["holding"]), (["xhs:cc03"], {}, 2))
         with Store.open(self.workspace) as store:
-            self.assertEqual(store.get("xhs:cc03").packed_in, MANUAL_IMPORT)
+            self.assertEqual(store.get("xhs:cc03").disposition, "manual")
 
     def test_posts_not_to_be_imported_stop_counting_as_waiting(self):
         with Store.open(self.workspace) as store:
             pack = build_pack(store, self.config, now=NOW).pack_id
             self.assertEqual(len(sync_imports(store, {}, now=NOW, adopt=False).waiting[pack]), 2)
-        report = self.run_cli("skip-import", "xhs:aa01")
-        self.assertEqual(report["marked"], ["xhs:aa01"])
-        self.assertEqual(self.run_cli("skip-import", "xhs:aa01")["marked"], [], "already recorded")
+        self.hold()
+        self.run_cli("imports", "--skip", "xhs:aa01")
         with Store.open(self.workspace) as store:
-            self.assertEqual(store.get("xhs:aa01").packed_in, NOT_IMPORTING)
+            self.assertEqual(
+                (store.get("xhs:aa01").disposition, store.get("xhs:aa01").packed_in), ("skipped", pack)
+            )
             after = sync_imports(store, {}, now=NOW, adopt=False)
         self.assertEqual(after.waiting, {pack: ["xhs:cc03"]})
         self.assertEqual(after.pack_sizes, {pack: 1})
 
-    def test_skip_import_needs_known_posts(self):
+    def test_mark_skip_and_clear_in_one_command_without_a_readable_bank(self):
+        self.assertEqual(
+            self.run_cli("imports", "--mark", "xhs:aa01", "--dry-run")["changed"], {"manual": ["xhs:aa01"]}
+        )
+        with Store.open(self.workspace) as store:
+            self.assertIsNone(store.get("xhs:aa01").disposition, "dry run changes nothing")
+        (self.tools / "ibank.py").write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+        data = self.run_cli("imports", "--mark", "xhs:aa01", "--skip", "xhs:cc03")
+        self.assertEqual((data["compared"], sorted(data["changed"])), (False, ["manual", "skipped"]))
+        with Store.open(self.workspace) as store:
+            self.assertEqual(
+                (store.get("xhs:aa01").disposition, store.get("xhs:cc03").disposition), ("manual", "skipped")
+            )
+        self.run_cli("imports", "--clear", "xhs:aa01", "xhs:cc03")
+        with Store.open(self.workspace) as store:
+            self.assertEqual(sorted(r.post.key for r in store.posts(packed=False)), ["xhs:aa01", "xhs:cc03"])
+
+    def test_imports_needs_known_posts_and_a_bank_when_only_comparing(self):
         import contextlib
         import io
 
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(main(["--workspace", str(self.workspace), "skip-import", "xhs:nothing"]), 1)
+            self.assertEqual(
+                main(["--workspace", str(self.workspace), "imports", "--skip", "xhs:nothing"]), 1
+            )
+            (self.tools / "ibank.py").write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+            self.assertEqual(main(["--workspace", str(self.workspace), "imports"]), 1)
 
     def run_cli(self, *argv):
         import contextlib
@@ -203,7 +225,7 @@ class AutoImportsTest(BankWithSources):
                 [(step.kind, step.status) for step in outcome.steps],
                 [("crawl", "ok"), ("imports", "ok"), ("pack", "skipped")],
             )
-            self.assertEqual(store.get("bili:1150000002").packed_in, MANUAL_IMPORT)
+            self.assertEqual(store.get("bili:1150000002").disposition, "manual")
             self.assertEqual(outcome.held_recordings, 0)
             self.assertEqual(outcome.imports.adopted, ["bili:1150000002"])
             self.assertIn("新记手工导入 1 篇", outcome.steps[1].message)

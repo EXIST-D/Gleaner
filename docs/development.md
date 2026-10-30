@@ -126,7 +126,7 @@ git push
 | 增量抓取 | 牛客、抖音、B 站真实跑过；知乎只核对过补丁能导入，没真实增量搜过 |
 | B 站录音 | 初筛标出 → 下载 → 提取音频 → 转写 → 抽题，真实走过 6 段（共约 3 小时）；还没下载的录音不会被打包 |
 | 自动运行 | 只真实跑过牛客；其余平台用假抓取器测过，登录过期时的停止只在测试里用脚本验证过；没有放进系统定时任务 |
-| 是否已导入 | `gleaner imports` 向 Interview Bank 的只读 `sources` 命令要来来源，按链接对照；手工导入的记成「手工导入」，不打算导入的用 `skip-import` 记成「不导入」 |
+| 是否已导入 | `gleaner imports` 向 Interview Bank 的只读 `sources` 命令要来来源，按链接对照；手工导入的用 `--mark`、不打算导入的用 `--skip` 记下（单独的 `disposition` 列） |
 | 转写 | faster-whisper `large-v3-turbo`（见下面的对比）；`gleaner glossary` 的内置术语表会写进有录音的素材包的 HANDOFF.md，Agent 改错时对照 |
 | `gleaner setup` | macOS 上从零装过一遍，`doctor` 全部通过；Windows 和 Linux 只跑过单元测试 |
 | 测试 | 约 240 个，只用合成数据；CI 在三个系统 × Python 3.11–3.13 上跑 |

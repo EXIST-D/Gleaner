@@ -94,7 +94,7 @@ MediaCrawler 的 B 站 detail 模式只认 BV 号（`media_platform/bilibili/hel
 
 ### B 站面试录音
 
-`gleaner media`、`gleaner crawl bili --url … --media` 和网页上的“下载音视频”都是一次 detail 运行，
+`gleaner media`、`gleaner auto` 和网页上的“下载音视频”都是一次 detail 运行，
 带 `--get_media yes`。MediaCrawler 把视频存在 `bili/media/<BV 号>/video.mp4`（另有 `cover.jpg`），
 记录里只有 av 号，Gleaner 换算成 BV 号去找视频。实际试过的情况：
 

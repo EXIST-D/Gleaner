@@ -98,7 +98,9 @@ class StoreTest(WorkspaceTestCase):
 
         connection = sqlite3.connect(self.workspace / DB_NAME)
         with connection:
-            connection.executescript(store_module._SCHEMA.replace("    media TEXT,\n", ""))
+            connection.executescript(
+                store_module._SCHEMA.replace("    media TEXT,\n    disposition TEXT,\n", "")
+            )
             connection.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")
             connection.execute(
                 "INSERT INTO runs (id, source, mode, params, output_dir, started_at, status)"
@@ -113,6 +115,47 @@ class StoreTest(WorkspaceTestCase):
         (version,) = connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         connection.close()
         self.assertEqual(version, str(SCHEMA_VERSION))
+
+    def test_version_2_workspace_turns_the_old_pack_markers_into_dispositions(self):
+        with self.open() as store:
+            self.run_ids(store, "r1")
+            for post_id, marker in (
+                ("aa01", "手工导入"),
+                ("bb02", "不导入"),
+                ("cc03", "pack-1"),
+                ("dd04", None),
+            ):
+                store.upsert_post(sample(post_id=post_id), run_id="r1", now=T0)
+                if marker:
+                    store.mark_packed([f"xhs:{post_id}"], pack_id=marker, now=T0)
+        connection = sqlite3.connect(self.workspace / DB_NAME)
+        with connection:
+            connection.execute("ALTER TABLE posts DROP COLUMN disposition")
+            connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+        connection.close()
+        with Store.open(self.workspace) as store:
+            found = {r.post.key: (r.packed_in, r.disposition) for r in store.posts()}
+            self.assertEqual(
+                found,
+                {
+                    "xhs:aa01": (None, "manual"),
+                    "xhs:bb02": (None, "skipped"),
+                    "xhs:cc03": ("pack-1", None),
+                    "xhs:dd04": (None, None),
+                },
+            )
+            self.assertEqual([r.post.key for r in store.posts(packed=False)], ["xhs:dd04"])
+
+    def test_disposition_keeps_a_post_out_of_the_unpacked_and_can_be_cleared(self):
+        with self.open() as store:
+            self.run_ids(store, "r1")
+            store.upsert_post(sample(), run_id="r1", now=T0)
+            store.set_disposition(["xhs:aa01"], "skipped", now=T0)
+            self.assertEqual(store.get("xhs:aa01").disposition, "skipped")
+            self.assertEqual(store.posts(packed=False), [])
+            self.assertEqual(store.posts(packed=True), [])
+            store.set_disposition(["xhs:aa01"], None, now=T1)
+            self.assertEqual([r.post.key for r in store.posts(packed=False)], ["xhs:aa01"])
 
     def test_filters(self):
         with self.open() as store:
