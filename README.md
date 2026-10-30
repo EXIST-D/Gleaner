@@ -70,6 +70,7 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake / m
 | 安装依赖、打补丁、建采集题库、装转写工具 | 自动 | `gleaner setup` |
 | 登录小红书、抖音、B 站、知乎 | **你**：扫码 | 第一次抓取时弹出窗口；登录状态保存在 `MediaCrawler/browser_data/`，过期了再扫一次。牛客不用登录 |
 | 抓取、去重、初筛 | 自动 | `gleaner crawl`（默认增量），或网页的抓取页 |
+| 以上加下载录音、打包，一条命令走完 | 自动 | [`gleaner auto`](#一条命令走完抓取到打包gleaner-auto)，可交给定时任务 |
 | 复核初筛标签 | 可选，你 | `gleaner label` 或网页的帖子页；不复核也能打包，只打「疑似真实面经」 |
 | 下载 B 站面试录音 | 自动 | `gleaner media` |
 | 打包、提取音频 | 自动 | `gleaner pack`，生成带导入命令的 HANDOFF.md |
@@ -81,8 +82,43 @@ Interview Bank（Agent）──► 采集题库：ingest images / web-intake / m
 也就是说，除了扫码登录和交给 Agent 的抽题、答案两步，其余都是一条命令。还没打通的地方：
 
 - Gleaner 不知道素材包有没有导入题库：Interview Bank 的命令行没有列出已导入来源的命令，导入完要自己记下来。
-- 没有内置定时任务。想定期抓取可以用 cron 或系统的计划任务运行 `gleaner crawl`；同一平台两次至少间隔 5 分钟，
-  登录过期时抓取会降级（退出码 3），要回来重新扫码。
+  不走素材包、手工导入题库的帖子，用 `gleaner mark-imported <帖子键>` 记一笔，以后不会再打包，也不会再自动下载它的录音。
+- 登录过期要回来扫码：`gleaner auto` 遇到要扫码的平台会跳过并写明原因（退出码 3），手动运行一次 `gleaner crawl <平台>` 扫码即可。
+
+### 一条命令走完：抓取到打包（`gleaner auto`）
+
+```bash
+gleaner auto --dry-run     # 先看看会做什么：每个平台的搜索范围、要下载的录音、能打包几篇
+gleaner auto               # 增量抓取各平台 → 下载新的 B 站面试录音 → 打包
+```
+
+每一步都是 `crawl`、`media`、`pack` 已有的逻辑，只是串了起来：
+
+1. 按 `[auto] platforms` 的顺序（默认全部，牛客最先，它不用登录）增量搜索配置里的关键词。
+   同一平台刚抓过就跳过这一步，不算失败；一个平台降级了，其余平台照常运行。
+2. B 站这次搜索成功的话，下载最多 `[auto] max_recordings`（默认 2）个标成录音的视频，一次一个；
+   两次 B 站运行之间照样等够最小间隔，一个下载失败就不再下载后面的。
+3. 打包可以打包的帖子（`candidate` 且没打过包）。**还没下载的录音不打包**：先打包的话只会导入标题，
+   而且打过包就不会再自动下载了；`gleaner pack` 默认也是这样，会提示还有几个录音等下载。
+4. 最后列出每一步的结果，并给出 HANDOFF.md 的位置，交给 Agent 导入。
+
+它**不会等你扫码**：MediaCrawler 一问二维码就停掉这个平台，记为降级，所以可以放心交给定时任务；
+第一次或登录过期时，加 `--login`（或直接 `gleaner crawl <平台>`）手动扫一次。
+常用参数：`--platform` 只处理几个平台、`--no-media`、`--no-pack`、`--full`（不做增量）、`--force`（忽略最小间隔）。
+同一工作区同一时间只能有一个 `gleaner auto`，用 `workspace/auto.lock` 把关，上一次崩溃留下的锁 12 小时后自动作废。
+
+交给系统的定时任务来运行（Gleaner 不会替你创建计划任务）。MediaCrawler 会打开一个 Chrome 窗口，
+所以要在有桌面的登录会话里运行，不要放在没有桌面的服务器上：
+
+```bash
+# macOS / Linux：crontab -e 加一行，每天 09:30 运行，输出追加到 workspace/auto.log
+30 9 * * * cd /path/to/Gleaner && .venv/bin/gleaner --workspace workspace auto --quiet >> workspace/auto.log 2>&1
+```
+
+```bat
+:: Windows：每天 09:30（在命令提示符里运行一次即可创建）
+schtasks /Create /SC DAILY /ST 09:30 /TN Gleaner /TR "cmd /c cd /d C:\path\to\Gleaner && .venv\Scripts\gleaner --workspace workspace auto --quiet >> workspace\auto.log 2>&1"
+```
 
 ## 环境要求
 
@@ -222,12 +258,14 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | `setup [部分…]` | 创建工作区并装好 MediaCrawler（含补丁）、Interview Bank 与采集题库、转写工具；部分是 `mediacrawler` `bank` `media`，不写就全装；`--no-model` 不下载转写模型 |
 | `doctor` | 检查 MediaCrawler 目录、启动命令和补丁、默认关键词、`ibank.py`、采集题库、导入用的 Python 版本、ffmpeg 和转写用的 Python |
 | `crawl <平台>` | `xhs` `dy` `bili` `zhihu` 调用 MediaCrawler，`nowcoder` 直接读取；`--keyword` 搜索或 `--url` 指定帖子，随后导入并初筛；搜索默认增量，`--full` 不限发布时间；B 站加 `--media` 同时下载音视频 |
+| `auto` | 增量抓取各平台 → 下载新的 B 站面试录音 → 打包，遇到要扫码的平台就跳过；`--dry-run` 只列出计划，`--platform`、`--no-media`、`--no-pack`、`--login`、`--full`、`--force`，见上文 |
 | `media [key…]` | 下载 B 站面试录音的音视频；不写帖子键就下载初筛标成录音、还没下载也没打包的视频；`--dry-run` 只列出 |
 | `import <dir>` | 导入已有的 MediaCrawler（或 Gleaner 自己的 `runs/<id>/raw`）输出目录 |
 | `screen [--all]` | 对未打标签的帖子初筛；`--all` 重判以前的规则标签，人工标签不动 |
 | `list` / `show` | 查看帖子、标签和初筛理由；`list --platform` 按平台筛选 |
 | `label <key> <label>` | 人工改标签，以后的初筛不会覆盖 |
-| `pack` | 打包（默认只打 `candidate` 且没打过包的帖子） |
+| `pack` | 打包（默认只打 `candidate` 且没打过包的帖子；还没下载的录音先留着） |
+| `mark-imported <key…>` | 记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音 |
 | `web` | 打开本机网页控制台（`--port` 换端口，`--no-open` 不自动打开浏览器） |
 | `stats` / `runs` | 统计与抓取记录 |
 

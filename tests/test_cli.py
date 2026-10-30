@@ -3,10 +3,13 @@ import io
 import json
 import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
+from gleaner.auto import AutoOutcome, Step
 from gleaner.cli import EXIT_DEGRADED, main
 from gleaner.config import WORKSPACE_ENV
+from gleaner.packer import PackResult
 from gleaner.sources.base import FetchResult
 from tests.support import (
     BILI_RECORDING,
@@ -154,6 +157,75 @@ class CliTest(WorkspaceTestCase):
         code, _, err = self.call("crawl", "bili", "--media")
         self.assertEqual(code, 1)
         self.assertIn("--url", err)
+
+    def test_auto_dry_run_lists_what_it_would_do(self):
+        self.call("init")
+        source = write_records(self.workspace.parent / "bili-data", "bili", [BILI_VIDEO, BILI_RECORDING])
+        self.json("import", str(source))
+        plan = self.json("auto", "--dry-run", "--platform", "bili")
+        self.assertEqual([row["platform"] for row in plan["platforms"]], ["bili"])
+        self.assertEqual([post["key"] for post in plan["recordings"]], ["bili:1150000002"])
+        self.assertEqual(plan["held_recordings"], 1)
+        text = self.call("auto", "--dry-run", "--platform", "bili", "--no-media")[1]
+        self.assertIn("抓取B站：不限发布时间", text)
+        self.assertIn("下载录音：没有要下载的", text)
+        self.assertIn("另有 1 个录音等下载", text)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["--workspace", str(self.workspace), "auto", "--platform", "weibo"])
+
+    def test_auto_reports_each_step_and_exits_3_when_one_degraded(self):
+        self.call("init")
+        pack = PackResult("pack-1", Path("/tmp/packs/pack-1"), 3, 1, 1, 1, held_recordings=1)
+        outcome = AutoOutcome(
+            steps=[
+                Step("crawl", "nowcoder", "ok", records=8, new=3),
+                Step("crawl", "xhs", "degraded", "登录状态已过期，需要重新扫码"),
+                Step("crawl", "dy", "skipped", "距离上次抓取不到 5 分钟，下次再抓"),
+                Step("media", "bili", "ok", records=1, media=1, post="bili:1"),
+                Step("pack", "", "ok", "pack-1：3 篇"),
+            ],
+            pack=pack,
+            held_recordings=1,
+        )
+        with mock.patch("gleaner.cli.run_auto", return_value=outcome) as run:
+            code, out, _ = self.call("auto", "--login", "--platform", "xhs", "--quiet")
+        self.assertEqual(code, EXIT_DEGRADED)
+        kwargs = run.call_args.kwargs
+        self.assertEqual((kwargs["platforms"], kwargs["attended"], kwargs["pack"]), (["xhs"], True, True))
+        for line in (
+            "抓取牛客：完成；读到 8 条，新增 3",
+            "抓取小红书：降级；读到 0 条，新增 0；登录状态已过期，需要重新扫码",
+            "抓取抖音：跳过；距离上次抓取不到 5 分钟，下次再抓",
+            "下载录音 bili:1：完成；下载到 1 个音视频",
+            "素材包 pack-1：3 篇（看图 1，读正文 1，转写录音 1）",
+            "还有 1 个录音没下载",
+        ):
+            self.assertIn(line, out)
+        self.assertIn("HANDOFF.md", out)
+
+        outcome.steps.pop(1)
+        with mock.patch("gleaner.cli.run_auto", return_value=outcome) as run:
+            code, out, _ = self.call("auto", "--no-pack", "--no-media", "--json")
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(out)["ok"])
+        self.assertEqual((run.call_args.kwargs["pack"], run.call_args.kwargs["download"]), (False, False))
+
+    def test_mark_imported_keeps_a_post_out_of_packs_and_downloads(self):
+        self.call("init")
+        source = write_records(self.workspace.parent / "bili-data", "bili", [BILI_VIDEO, BILI_RECORDING])
+        self.json("import", str(source))
+        marked = self.json("mark-imported", "bili:1150000002")
+        self.assertEqual((marked["marked"], marked["unchanged"]), (["bili:1150000002"], []))
+        self.assertEqual(self.json("media", "--dry-run")["posts"], [])
+        self.assertEqual(self.json("show", "bili:1150000002")["post"]["packed_in"], "手工导入")
+        self.assertNotIn(
+            "bili:1150000002", [post["key"] for post in self.json("list", "--unpacked")["posts"]]
+        )
+        again = self.json("mark-imported", "bili:1150000002", "bili:1150000001")
+        self.assertEqual((again["marked"], again["unchanged"]), (["bili:1150000001"], ["bili:1150000002"]))
+        code, _, err = self.call("mark-imported", "bili:404")
+        self.assertEqual(code, 1)
+        self.assertIn("找不到帖子：bili:404", err)
 
     def test_crawl_rejects_bad_arguments(self):
         self.call("init")

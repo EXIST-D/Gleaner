@@ -53,6 +53,13 @@ ffmpeg = "ffmpeg"
 # 下载视频时单次运行的超时（秒）；B 站下载较慢，半小时的录音可能要十几分钟
 download_timeout_seconds = 3600
 
+# `gleaner auto`：一条命令走完 抓取 → 下载录音 → 打包，适合交给定时任务
+[auto]
+# 抓取哪些平台（xhs、dy、bili、zhihu、nowcoder），按这个顺序；留空表示全部（牛客最先，不用登录）
+platforms = []
+# 每次最多下载几个 B 站面试录音（长视频下载要十几分钟）；0 表示不自动下载
+max_recordings = 2
+
 [handoff]
 # 独立的采集题库目录（不要用个人题库）。首次使用前运行：python3 <ibank.py> init --bank <目录>
 # 默认对应仓库根目录下的 collected-bank/（已被 git 忽略）

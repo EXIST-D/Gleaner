@@ -39,6 +39,8 @@ from pathlib import Path
 from gleaner.adapters.exports import content_files
 from gleaner.audio import find_ffmpeg
 from gleaner.config import MediaConfig, MediaCrawlerConfig
+from gleaner.models import PostRecord
+from gleaner.screening import is_recording
 from gleaner.sources.base import FetchResult
 from gleaner.timeutil import CHINA_TZ, utc_now
 from gleaner.urls import bilibili_detail_target
@@ -46,6 +48,16 @@ from gleaner.urls import bilibili_detail_target
 LOG_NAME = "mediacrawler.log"
 MODES = ("search", "detail")
 SEARCH_PAGE_SIZE = 20
+_QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is \d+s", re.IGNORECASE)
+
+
+class LoginRequired(Exception):
+    """An unattended run stopped because MediaCrawler asked for a QR code scan."""
+
+
+def is_login_prompt(line: str) -> bool:
+    """MediaCrawler logs this only when the saved login is missing or expired and it wants a QR code scan."""
+    return bool(_QR_COUNTDOWN.search(line)) or ("Begin login" in line and "by qrcode" in line)
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,12 @@ PLATFORMS = {
     "bili": CrawlerPlatform("bili", SEARCH_PAGE_SIZE, get_media=False, recordings=True),
     "zhihu": CrawlerPlatform("zhihu", SEARCH_PAGE_SIZE, get_media=False),
 }
+
+
+def awaiting_download(record: PostRecord) -> bool:
+    """A video screening flagged as an interview recording whose audio and video are not downloaded yet."""
+    spec = PLATFORMS.get(record.post.platform)
+    return bool(spec and spec.recordings and not record.post.media and is_recording(record.label_reasons))
 
 
 def tool_dirs(ffmpeg: str) -> list[Path]:
@@ -122,7 +140,7 @@ def search_window(platform: str, since: datetime, now: datetime) -> SearchWindow
 
 Runner = Callable[[Sequence[str], Path, int, Path, Mapping[str, str]], int]
 """(command, working directory, timeout in seconds, log file, extra environment) -> exit code;
-raises TimeoutError."""
+raises TimeoutError, or LoginRequired when an unattended run was stopped at a login prompt."""
 
 
 def build_command(
@@ -179,8 +197,12 @@ class MediaCrawlerDriver:
         platform: str = "xhs",
         echo: bool = True,
         media: MediaConfig | None = None,
+        unattended: bool = False,
     ):
-        """With `media`, detail runs also download the videos (Bilibili recordings only)."""
+        """With `media`, detail runs also download the videos (Bilibili recordings only).
+
+        An unattended run stops as soon as MediaCrawler asks for a QR code scan instead of waiting for someone.
+        """
         if platform not in PLATFORMS:
             raise ValueError(f"MediaCrawler does not crawl {platform}")
         if media is not None and not PLATFORMS[platform].recordings:
@@ -188,7 +210,11 @@ class MediaCrawlerDriver:
         self.config = config
         self.platform = platform
         self.media = media
-        self.runner = runner or make_runner(echo=echo, path_dirs=tool_dirs(media.ffmpeg) if media else ())
+        self.runner = runner or make_runner(
+            echo=echo,
+            path_dirs=tool_dirs(media.ffmpeg) if media else (),
+            stop_when=is_login_prompt if unattended else None,
+        )
 
     @property
     def timeout_seconds(self) -> int:
@@ -267,6 +293,13 @@ class MediaCrawlerDriver:
                 output_dir,
                 f"MediaCrawler 超过 {timeout} 秒没有结束，{cause}；已产出的数据仍会导入。日志：{log_path}",
             )
+        except LoginRequired:
+            return FetchResult(
+                "degraded",
+                output_dir,
+                f"登录状态已过期，需要重新扫码；自动运行不会等待扫码。先手动运行 gleaner crawl {self.platform} "
+                f"扫一次码，登录状态保存在 MediaCrawler 里，下次自动运行就能用。日志：{log_path}",
+            )
         except OSError as exc:
             return FetchResult("degraded", output_dir, f"无法启动 MediaCrawler：{exc}")
 
@@ -294,11 +327,13 @@ def make_runner(
     on_line: Callable[[str], None] | None = None,
     on_start: Callable[[subprocess.Popen], None] | None = None,
     path_dirs: Sequence[Path] = (),
+    stop_when: Callable[[str], bool] | None = None,
 ) -> Runner:
     """Run MediaCrawler, teeing its output to the log file, the terminal (echo) and an optional callback.
 
     on_start receives the process so a caller can terminate it; the run then ends like any failed run.
     path_dirs go in front of PATH, so MediaCrawler finds tools such as ffmpeg.
+    stop_when terminates the process at the first output line it accepts; the runner then raises LoginRequired.
     """
 
     def run(command: Sequence[str], cwd: Path, timeout: int, log_path: Path, extra: Mapping[str, str]) -> int:
@@ -320,6 +355,7 @@ def make_runner(
             ) as process,
         ):
             timed_out = threading.Event()
+            stopped = False
 
             def kill() -> None:
                 timed_out.set()
@@ -337,11 +373,18 @@ def make_runner(
                         sys.stderr.write(line)
                     if on_line:
                         on_line(line.rstrip("\n"))
+                    if stop_when and stop_when(line):
+                        # Stop reading too: a browser MediaCrawler started may keep the pipe open after it exits.
+                        stopped = True
+                        process.terminate()
+                        break
                 returncode = process.wait()
             finally:
                 timer.cancel()
         if timed_out.is_set():
             raise TimeoutError(timeout)
+        if stopped:
+            raise LoginRequired
         return returncode
 
     return run

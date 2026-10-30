@@ -12,7 +12,7 @@ from gleaner.adapters.exports import copy_export, iter_posts
 from gleaner.config import Config
 from gleaner.errors import GleanerError
 from gleaner.models import PLATFORMS, PostRecord
-from gleaner.screening import Screener, is_recording
+from gleaner.screening import Screener
 from gleaner.sources import mediacrawler
 from gleaner.sources.base import Fetcher
 from gleaner.sources.mediacrawler import MediaCrawlerDriver, Runner, search_notes_per_keyword
@@ -66,10 +66,12 @@ def fetcher_for(
     should_stop: Callable[[], bool] | None = None,
     echo: bool = True,
     media: bool = False,
+    unattended: bool = False,
 ) -> Fetcher:
     """MediaCrawler for the platforms it crawls, Gleaner's own reader for Nowcoder.
 
     With media, the crawl also downloads the videos, for platforms whose recordings Gleaner transcribes.
+    An unattended MediaCrawler run stops at a QR code prompt instead of waiting for a scan.
     """
     _check_platform(platform)
     if media:
@@ -77,7 +79,12 @@ def fetcher_for(
     if platform == "nowcoder":
         return NowcoderFetcher(config.nowcoder, on_line=on_line, should_stop=should_stop, echo=echo)
     return MediaCrawlerDriver(
-        config.mediacrawler, runner, platform=platform, echo=echo, media=config.media if media else None
+        config.mediacrawler,
+        runner,
+        platform=platform,
+        echo=echo,
+        media=config.media if media else None,
+        unattended=unattended,
     )
 
 
@@ -104,9 +111,7 @@ def recordings_to_download(store: Store, keys: list[str] | None = None) -> list[
         platforms=[code for code, spec in mediacrawler.PLATFORMS.items() if spec.recordings]
     )
     return [
-        record
-        for record in candidates
-        if not record.post.media and not record.packed_in and is_recording(record.label_reasons)
+        record for record in candidates if not record.packed_in and mediacrawler.awaiting_download(record)
     ]
 
 

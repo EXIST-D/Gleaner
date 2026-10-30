@@ -9,7 +9,7 @@
 | `installer.py` | `gleaner setup`：下载 MediaCrawler 并固定版本、检查和打补丁、`uv sync`；下载 Interview Bank、建采集题库；装 faster-whisper、ffmpeg 链接和转写模型；把路径写回 `gleaner.toml`（逐行改，保留注释） |
 | `patches/mediacrawler/` | 对 MediaCrawler 的补丁和 `NOTICE`（按 MediaCrawler 的许可证，不按 MIT），随包分发 |
 | `sources/base.py` | `Fetcher` 接口（`problems()`、`run()`）与 `FetchResult`；`run()` 接受增量搜索的 `since` 和已保存的帖子 ID `known` |
-| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体、B 站 av 链接换成 BV 链接）、把增量搜索的发布时间范围换成补丁读的环境变量、运行子进程（可把 ffmpeg 所在目录放进 PATH）、记录日志、把失败归为“降级” |
+| `sources/mediacrawler.py` | 按平台拼装 MediaCrawler 命令（分页大小、是否下载媒体、B 站 av 链接换成 BV 链接）、把增量搜索的发布时间范围换成补丁读的环境变量、运行子进程（可把 ffmpeg 所在目录放进 PATH；无人值守时一问二维码就结束子进程）、记录日志、把失败归为“降级”；`awaiting_download` 判断一个录音帖子是否还没下载 |
 | `sources/nowcoder.py` | 牛客读取器：翻阅最新面经列表、本地匹配关键词、读详情和图片；增量时跳过已保存的帖子、翻到旧帖就停；限速、重试、识别拦截 |
 | `adapters/exports.py` | 各平台导出的数据目录与图片目录对照；读取运行目录里的全部帖子；复制外部导出目录 |
 | `adapters/common.py` | 适配器共用：读 jsonl/json、找本地图片和视频、解析“1.2万”这类计数、话题标签 |
@@ -18,7 +18,8 @@
 | `store.py` | SQLite：帖子、标签、运行记录、关键词进度；带 schema 版本和逐版升级 |
 | `screening.py` | 可解释的规则初筛；标出 B 站面试录音 |
 | `pipeline.py` | 编排：按平台选抓取器 → 抓取 → 导入 → 初筛；按平台计算计划篇数、抓取间隔和增量搜索的起点；挑出要下载的录音 |
-| `packer.py` | 生成素材包与 `HANDOFF.md` |
+| `auto.py` | `gleaner auto`：按顺序增量抓取各平台 → 下载标成录音的 B 站视频 → 打包，每一步的结果记成 `Step`，一步失败不影响下一步；`auto.lock` 保证同一时间只有一次自动运行 |
+| `packer.py` | 生成素材包与 `HANDOFF.md`；默认选帖时把还没下载的录音留下（`packable`） |
 | `audio.py` | 用 ffmpeg 把录音视频转成单声道、响度均衡的 `audio.flac`；打包器接受替换的提取函数，测试不需要 ffmpeg |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor`、`setup` 和网页共用；补丁用 `git apply --reverse --check` 判断是否已打上 |
@@ -29,7 +30,7 @@
 | `web/progress.py` | 按平台给出步骤，从日志识别当前步骤和需要人操作的提示（扫码、验证、确认框、牛客限流等待） |
 | `web/static/` | 原生 HTML/CSS/JS 前端，无构建步骤 |
 
-依赖方向是单向的：`cli / web → pipeline / packer → sources / adapters / screening → store / models`。
+依赖方向是单向的：`cli / web → pipeline / packer → sources / adapters / screening → store / models`；`auto` 夹在 `cli` 和 `pipeline / packer` 之间，网页不用它。
 网页控制台和命令行调用同一组函数（`crawl`、`fetcher_for`、`build_pack`、`environment_checks`），所以两边的限制和结果一致。
 来源相关的细节（命令行参数、接口地址、导出字段）只出现在 `sources/` 和 `adapters/` 里，来源改版时只改这两处
 （再加上 `web/progress.py` 里的日志标记）。
@@ -65,6 +66,16 @@
 小红书完全不能按时间搜，只能按最新排序。牛客没有搜索，读取器拿到 `since` 后在列表里跳过旧帖，
 一整页都早于 `since` 就停止翻页（列表本身按发布时间倒序）；拿到的 `known` 是已保存的帖子 ID，直接跳过不读详情。
 按链接抓取和 `--full` 不做增量。
+
+**自动运行不等人，也不留半截。** `gleaner auto` 是给定时任务用的，所以：
+一问二维码就结束 MediaCrawler 子进程（`is_login_prompt` 只认 MediaCrawler 登录代码自己的日志，不会被帖子内容误触），
+记为降级并写明怎么补救，而不是占着 15 分钟的超时；平台之间互不影响，失败只记在这一步；
+下载录音时 B 站两次运行之间照样等够最小间隔，一个下载失败就不再下载后面的，免得对着同一个问题连续请求。
+最要紧的是**不重复**：还没下载的录音不能打包——打包只会导入标题，而打过包的帖子不再自动下载，那段录音就永远转写不了——
+所以默认选帖时把它们留下（`packer.packable`），`gleaner pack --key` 明确指定时才打。
+两次自动运行重叠会把同一批帖子打两次包、让题目重复计数，所以用 `auto.lock`（`O_EXCL` 创建，12 小时后算崩溃遗留）互斥；
+没用进程号判断，因为 Windows 上 `os.kill(pid, 0)` 会结束进程。
+不经素材包、手工导入题库的帖子用 `mark-imported` 把 `packed_in` 记成“手工导入”，Gleaner 没有别的办法知道它们已经进了题库。
 
 **失败是“降级”，不是崩溃。** 登录过期、滑块验证、超时、退出码非 0、没有产出，都记为 `degraded` 并写明原因；
 已经产出的数据照常导入。退出码 3 让脚本能区分降级和真正的错误。

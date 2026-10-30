@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 
 from gleaner.models import PLATFORMS
+from gleaner.sources.mediacrawler import is_login_prompt
 
 STEP_TITLES = {
     "browser": "启动浏览器",
@@ -26,7 +27,6 @@ _RECORDING_TITLES = {"search": "读取视频", "download": "下载音视频"}
 _MERGED = "DASH 合流完成"
 _APPS = {"xhs": "小红书", "dy": "抖音", "bili": "哔哩哔哩", "zhihu": "知乎"}
 
-_QR_COUNTDOWN = re.compile(r"waiting for scan code login, remaining time is \d+s", re.IGNORECASE)
 # Every platform's check_login_state retries 600 times a second apart; the "remaining time" in the log is fixed text.
 LOGIN_WAIT_SECONDS = 600
 _LOGGED_IN = ("Login successful", "Login status confirmed", "Login state result: True")
@@ -82,7 +82,7 @@ class Progress:
             self._feed_mediacrawler(line)
 
     def _feed_mediacrawler(self, line: str) -> None:
-        if _QR_COUNTDOWN.search(line) or ("Begin login" in line and "by qrcode" in line):
+        if is_login_prompt(line):
             self._advance("login")
             self.attention = "qr"
             self.qr_seconds = self.qr_seconds or LOGIN_WAIT_SECONDS

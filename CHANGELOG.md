@@ -2,6 +2,16 @@
 
 ## 未发布
 
+- 新命令 `gleaner auto`：一条命令走完 增量抓取各平台 → 下载标成录音的 B 站视频 → 打包，适合交给系统的定时任务
+  （README 有 cron 和 Windows 计划任务的写法）。
+  - 平台按配置的 `[auto] platforms`（默认全部，牛客最先）逐个抓；刚抓过的平台跳过，降级的平台不影响其余；
+    最多下载 `[auto] max_recordings`（默认 2）个录音，两次 B 站运行之间等够最小间隔，一个失败就不再下载后面的。
+  - 不等人扫码：MediaCrawler 一问二维码就结束子进程，记为降级并提示手动 `gleaner crawl <平台>` 扫一次；`--login` 才会等。
+  - 同一工作区同一时间只能有一次自动运行（`workspace/auto.lock`，12 小时后算崩溃遗留）。
+  - `--dry-run` 只列出计划，`--platform`、`--no-media`、`--no-pack`、`--full`、`--force`；退出码 0 全部正常或跳过，3 有降级。
+- 打包不再带上还没下载的录音：这种帖子打包后只会导入标题，又因为已经打过包而不会再自动下载。默认选帖时留下它们，
+  `pack` 提示还有几个等下载；`gleaner pack --key` 明确指定时照打。
+- 新命令 `gleaner mark-imported <帖子键…>`：记下已经手工导入题库的帖子，以后不会再打包，也不会再自动下载它的录音。
 - 新命令 `gleaner setup [mediacrawler|bank|media] [--no-model]`，一条命令装好其余依赖（可重复运行，装好的跳过）：
   - `mediacrawler`：从官方仓库下载 MediaCrawler 并固定到核对过的 `68d9ef1`，打上 Gleaner 的补丁，`uv sync`；
     没有 Chrome 或 Edge 时装 Playwright 的 Chromium。补丁和本机改动冲突时一个都不打，提示先 `git stash`。

@@ -1,26 +1,36 @@
 import os
 import sys
+import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from gleaner.config import MediaConfig, MediaCrawlerConfig
+from gleaner.pipeline import import_export
 from gleaner.sources.mediacrawler import (
     LOG_NAME,
+    LoginRequired,
     MediaCrawlerDriver,
+    awaiting_download,
     build_command,
     diagnose,
+    is_login_prompt,
     make_runner,
     search_notes_per_keyword,
     search_window,
     tool_dirs,
 )
+from gleaner.store import Store
 from gleaner.timeutil import utc_now
 from tests.support import (
     BILI_RECORDING,
+    BILI_VIDEO,
     DOUYIN_VIDEO,
+    NOW,
     WorkspaceTestCase,
     fake_tool,
+    make_config,
     write_export,
     write_records,
 )
@@ -303,6 +313,41 @@ class DriverTest(WorkspaceTestCase):
         with self.assertRaises(TimeoutError):
             runner([sys.executable, "main.py"], self.home, 1, self.raw.parent / LOG_NAME, {})
 
+    def test_unattended_run_stops_at_the_qr_code_prompt(self):
+        (self.home / "main.py").write_text(
+            "import time\n"
+            "print('Begin login douyin by qrcode ...', flush=True)\n"
+            "print('waiting for scan code login, remaining time is 20s', flush=True)\n"
+            "time.sleep(60)\n",
+            encoding="utf-8",
+        )
+        driver = MediaCrawlerDriver(self.config, echo=False, unattended=True, platform="dy")
+        started = time.monotonic()
+        result = driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["k"])
+        self.assertLess(time.monotonic() - started, 30, "it must not wait for the scan or the timeout")
+        self.assertEqual(result.status, "degraded")
+        self.assertIn("登录状态已过期", result.message)
+        self.assertIn("gleaner crawl dy", result.message)
+        self.assertIn("by qrcode", (self.raw.parent / LOG_NAME).read_text(encoding="utf-8"))
+
+    def test_attended_run_does_not_stop_at_the_prompt(self):
+        (self.home / "main.py").write_text(
+            "print('waiting for scan code login, remaining time is 20s')\nprint('Login successful')\n",
+            encoding="utf-8",
+        )
+        runner = MediaCrawlerDriver(self.config, echo=False).runner
+        self.assertEqual(
+            runner([sys.executable, "main.py"], self.home, 30, self.raw.parent / LOG_NAME, {}), 0
+        )
+
+    def test_stop_when_is_checked_on_every_line_and_raises_login_required(self):
+        (self.home / "main.py").write_text(
+            "print('one')\nprint('stop here')\nprint('three')\n", encoding="utf-8"
+        )
+        runner = make_runner(stop_when=lambda line: "stop" in line)
+        with self.assertRaises(LoginRequired):
+            runner([sys.executable, "main.py"], self.home, 30, self.raw.parent / LOG_NAME, {})
+
     def test_incremental_search_passes_the_time_range(self):
         envs = []
 
@@ -317,6 +362,39 @@ class DriverTest(WorkspaceTestCase):
         driver.run(mode="search", output_dir=self.raw, log_dir=self.raw.parent, keywords=["a"])
         driver.run(mode="detail", output_dir=self.raw, log_dir=self.raw.parent, targets=["1"], since=since)
         self.assertEqual(envs, [{"GLEANER_DY_PUBLISH_TIME": "7"}, {}, {}])
+
+
+class LoginPromptTest(unittest.TestCase):
+    def test_only_the_qr_code_prompts_count(self):
+        for line in (
+            "waiting for scan code login, remaining time is 20s",
+            "2026-10-29 INFO - [DouYinLogin.begin] Begin login douyin by qrcode ...",
+        ):
+            self.assertTrue(is_login_prompt(line), line)
+        for line in (
+            "Use cache login state get web interface successfull!",
+            "Begin login xiaohongshu by cookie",
+            "Login successful",
+            "title:面试官问：二维码登录怎么实现",
+        ):
+            self.assertFalse(is_login_prompt(line), line)
+
+
+class AwaitingDownloadTest(WorkspaceTestCase):
+    def test_only_flagged_bilibili_videos_without_a_download(self):
+        config = make_config(self.workspace)
+        source = write_records(self.workspace / "external", "bili", [BILI_RECORDING, BILI_VIDEO])
+        write_records(source, "douyin", [DOUYIN_VIDEO])
+        with Store.open(self.workspace, create=True) as store:
+            import_export(store, config, source, now=NOW)
+            flagged = {record.post.key: awaiting_download(record) for record in store.posts()}
+            self.assertEqual(flagged["bili:1150000002"], True)
+            self.assertEqual(flagged["bili:1150000001"], False, "not flagged as a recording")
+            self.assertEqual(flagged["dy:7300000000000000002"], False, "Douyin recordings are not downloaded")
+
+            record = store.get("bili:1150000002")
+            downloaded = replace(record, post=replace(record.post, media="media/video.mp4"))
+            self.assertFalse(awaiting_download(downloaded))
 
 
 class SearchWindowTest(unittest.TestCase):

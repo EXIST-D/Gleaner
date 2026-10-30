@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gleaner import __version__
+from gleaner.auto import AutoOutcome, chosen_platforms, run_auto
 from gleaner.checks import environment_checks
 from gleaner.config import (
     CONFIG_NAME,
@@ -19,7 +20,7 @@ from gleaner.config import (
 from gleaner.errors import GleanerError
 from gleaner.installer import PARTS, Installer, make_run
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import DEFAULT_LIMIT, build_pack
+from gleaner.packer import DEFAULT_LIMIT, MANUAL_IMPORT, build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     crawl,
@@ -30,6 +31,7 @@ from gleaner.pipeline import (
     recordings_to_download,
     screen,
     search_plan,
+    seconds_until_next_crawl,
 )
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, utc_now
@@ -101,6 +103,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--media", action="store_true", help="同时下载视频，用来转写面试录音（只支持 B 站，配合 --url）"
     )
 
+    auto = command(
+        "auto",
+        cmd_auto,
+        "一条命令走完：增量抓取各平台 → 下载 B 站面试录音 → 打包；适合交给定时任务，遇到要扫码的平台会跳过",
+    )
+    auto.add_argument(
+        "--platform",
+        action="append",
+        choices=CRAWL_PLATFORMS,
+        default=[],
+        help=f"只处理这些平台，可重复；默认用配置的 [auto] platforms，没配就是全部（{platforms_help}）",
+    )
+    auto.add_argument("--no-media", action="store_true", help="不下载 B 站面试录音")
+    auto.add_argument("--no-pack", action="store_true", help="只抓取和下载，不打包")
+    auto.add_argument(
+        "--login", action="store_true", help="登录过期时等你扫码（手动运行时用；默认遇到扫码就跳过这个平台）"
+    )
+    auto.add_argument(
+        "--full", action="store_true", help="不做增量：不限发布时间，以前保存过的帖子也重新读取"
+    )
+    auto.add_argument("--force", action="store_true", help="忽略同一平台两次抓取之间的最小间隔")
+    auto.add_argument("--dry-run", action="store_true", help="只列出这次会做什么，不抓取")
+    auto.add_argument("--quiet", action="store_true", help="不在终端显示抓取过程的输出")
+
     media = command("media", cmd_media, "下载 B 站面试录音的音视频，打包时会转成音频交给 Interview Bank 转写")
     media.add_argument("key", nargs="*", help="帖子键；不写就下载初筛标成录音、还没下载也没打包的视频")
     media.add_argument("--dry-run", action="store_true", help="只列出要下载的视频")
@@ -138,6 +164,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=DEFAULT_LIMIT, help=f"最多打包多少篇，默认 {DEFAULT_LIMIT}"
     )
     pack.add_argument("--bank", type=Path, help="采集题库目录；默认用配置里的 handoff.bank")
+
+    imported_by_hand = command(
+        "mark-imported",
+        cmd_mark_imported,
+        "记下已经手工导入题库的帖子：以后不会再打包，也不会再自动下载它的录音",
+    )
+    imported_by_hand.add_argument("key", nargs="+", help="帖子键，可以写多个")
 
     web = command("web", cmd_web, "打开本机网页控制台：概览、可视化抓取、看帖改标签、打包")
     web.add_argument("--port", type=int, default=8765, help="端口，默认 8765；只监听 127.0.0.1")
@@ -258,6 +291,96 @@ def cmd_crawl(args) -> int:
     return 0 if outcome.status == "ok" else EXIT_DEGRADED
 
 
+def cmd_auto(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    platforms = chosen_platforms(config, args.platform)
+    download = not args.no_media and config.auto.max_recordings > 0
+    if args.dry_run:
+        with Store.open(config.workspace) as store:
+            data, text = _auto_plan(
+                store, config, platforms, download=download, force=args.force, full=args.full
+            )
+        return _emit(args, data, text)
+    say = (lambda text: None) if args.json else (lambda text: print(text, file=sys.stderr))
+    with Store.open(config.workspace) as store:
+        outcome = run_auto(
+            store,
+            config,
+            platforms=platforms,
+            download=download,
+            pack=not args.no_pack,
+            force=args.force,
+            full=args.full,
+            attended=args.login,
+            echo=not (args.quiet or args.json),
+            say=say,
+        )
+    _emit(args, outcome.as_dict(), _auto_text(outcome))
+    return EXIT_DEGRADED if outcome.degraded else 0
+
+
+def _auto_plan(store: Store, config, platforms: list[str], *, download: bool, force: bool, full: bool):
+    now = utc_now()
+    keywords = list(config.keywords)
+    rows, text = [], [f"关键词：{'、'.join(keywords) or '无（先在 gleaner.toml 的 keywords 里配置）'}"]
+    for platform in platforms:
+        plan = search_plan(store, platform=platform, keywords=keywords, now=now, incremental=not full)
+        wait = 0 if force else seconds_until_next_crawl(store, config, now, platform=platform)
+        label = PLATFORMS[platform].label
+        rows.append({"platform": platform, "plan": plan.describe(platform), "wait_seconds": wait})
+        text.append(
+            f"抓取{label}：{plan.describe(platform)}"
+            + (f"；距离上次抓取太近，这次会跳过（还要等 {wait // 60 + 1} 分钟）" if wait else "")
+        )
+    recordings = (
+        recordings_to_download(store)[: config.auto.max_recordings]
+        if download and "bili" in platforms
+        else []
+    )
+    text += [f"下载录音：{_record_line(record)}" for record in recordings] or ["下载录音：没有要下载的"]
+    ready, held = packable(store)
+    text.append(f"打包：{len(ready)} 篇可以打包" + (f"，另有 {held} 个录音等下载" if held else ""))
+    data = {
+        "ok": True,
+        "platforms": rows,
+        "recordings": [_record_brief(record) for record in recordings],
+        "packable": len(ready),
+        "held_recordings": held,
+    }
+    return data, text
+
+
+def _auto_text(outcome: AutoOutcome) -> list[str]:
+    titles = {"ok": "完成", "degraded": "降级", "failed": "没能运行", "skipped": "跳过"}
+    lines = []
+    for step in outcome.steps:
+        if step.kind == "crawl":
+            what = f"抓取{_platform_label(step.platform)}"
+            detail = f"读到 {step.records} 条，新增 {step.new}" if step.status in ("ok", "degraded") else ""
+        elif step.kind == "media":
+            what = f"下载录音 {step.post}"
+            detail = f"下载到 {step.media} 个音视频" if step.status in ("ok", "degraded") else ""
+        else:
+            what = "打包"
+            detail = ""
+        reason = step.message if step.status != "ok" or step.kind == "pack" else ""
+        lines.append(
+            f"{what}：{titles[step.status]}" + "".join(f"；{part}" for part in (detail, reason) if part)
+        )
+    if outcome.pack:
+        pack = outcome.pack
+        recordings = f"，转写录音 {pack.media_posts}" if pack.media_posts else ""
+        lines += [
+            f"素材包 {pack.pack_id}：{pack.posts} 篇（看图 {pack.image_posts}，读正文 {pack.text_posts}{recordings}）",
+            f"把 {pack.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
+        ]
+    if outcome.held_recordings:
+        lines.append(
+            f"还有 {outcome.held_recordings} 个录音没下载，所以没打包；下载后再运行 gleaner auto 或 gleaner pack。"
+        )
+    return lines
+
+
 def cmd_media(args) -> int:
     config = load_config(resolve_workspace(args.workspace))
     with Store.open(config.workspace) as store:
@@ -364,7 +487,25 @@ def cmd_pack(args) -> int:
         f"位置：{result.path}",
         f"把 {result.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
     ]
+    if result.held_recordings:
+        text.append(f"还有 {result.held_recordings} 个录音没下载，所以没打包；先运行 gleaner media，再打包。")
     return _emit(args, {"ok": True, **result.as_dict()}, text)
+
+
+def cmd_mark_imported(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    with Store.open(config.workspace) as store:
+        records = store.posts(keys=args.key)
+        missing = sorted(set(args.key) - {record.post.key for record in records})
+        if missing:
+            raise GleanerError(f"找不到帖子：{', '.join(missing)}")
+        fresh = [record.post.key for record in records if not record.packed_in]
+        store.mark_packed(fresh, pack_id=MANUAL_IMPORT, now=iso(utc_now()))
+    skipped = [record.post.key for record in records if record.packed_in]
+    text = [f"已记下 {len(fresh)} 篇为{MANUAL_IMPORT}：{'、'.join(fresh) or '无'}"]
+    if skipped:
+        text.append(f"{len(skipped)} 篇本来就打过包，没改：{'、'.join(skipped)}")
+    return _emit(args, {"ok": True, "marked": fresh, "unchanged": skipped}, text)
 
 
 def cmd_web(args) -> int:

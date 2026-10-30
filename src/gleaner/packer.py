@@ -13,12 +13,15 @@ from gleaner.bodytext import MIN_LISTED_QUESTIONS, choose_intake, listed_questio
 from gleaner.config import Config
 from gleaner.errors import GleanerError
 from gleaner.models import PLATFORMS, PostRecord
+from gleaner.sources.mediacrawler import awaiting_download
 from gleaner.store import Store
 from gleaner.timeutil import china_date, iso, new_id
 
 PACK_SCHEMA = "gleaner.pack"
 PACK_SCHEMA_VERSION = 1
 DEFAULT_LIMIT = 20
+MANUAL_IMPORT = "手工导入"
+"""`packed_in` of a post imported into the bank without a pack: it is never packed or downloaded again."""
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,8 @@ class PackResult:
     image_posts: int
     text_posts: int
     media_posts: int = 0
+    held_recordings: int = 0
+    """Recordings left out because their video is not downloaded yet."""
 
     def as_dict(self) -> dict:
         return {
@@ -38,7 +43,22 @@ class PackResult:
             "image_posts": self.image_posts,
             "text_posts": self.text_posts,
             "media_posts": self.media_posts,
+            "held_recordings": self.held_recordings,
         }
+
+
+def packable(
+    store: Store, *, labels: list[str] | None = None, limit: int = DEFAULT_LIMIT
+) -> tuple[list[PostRecord], int]:
+    """Unpacked posts with the labels (default: candidates) that are ready to pack, newest first, and how
+    many recordings are held back.
+
+    A recording packed before its video is downloaded would only import its title and, once packed, is never
+    downloaded again, so it waits for `gleaner media`.
+    """
+    records = store.posts(labels=labels or ["candidate"], packed=False)
+    ready = [record for record in records if not awaiting_download(record)]
+    return ready[:limit], len(records) - len(ready)
 
 
 def build_pack(
@@ -52,7 +72,11 @@ def build_pack(
     bank: Path | None = None,
     extract: Extractor | None = None,
 ) -> PackResult:
-    """extract turns a recording into audio; by default ffmpeg, needed only when a post has one."""
+    """extract turns a recording into audio; by default ffmpeg, needed only when a post has one.
+
+    Without keys it packs `packable` posts; with keys it packs exactly those, recordings included.
+    """
+    held = 0
     if keys:
         records = store.posts(keys=keys)
         missing = sorted(set(keys) - {record.post.key for record in records})
@@ -62,9 +86,10 @@ def build_pack(
         if already:
             raise GleanerError(f"这些帖子已经打过包，重复导入会让题目重复计数：{', '.join(already)}")
     else:
-        records = store.posts(labels=labels or ["candidate"], packed=False, limit=limit)
+        records, held = packable(store, labels=labels, limit=limit)
     if not records:
-        raise GleanerError("没有可以打包的帖子（默认只打包标签为 candidate 且没打过包的帖子）")
+        hint = f"；有 {held} 个录音还没下载，先运行 gleaner media" if held else ""
+        raise GleanerError(f"没有可以打包的帖子（默认只打包标签为 candidate 且没打过包的帖子）{hint}")
     if extract is None and any(_recording(record, config.workspace) for record in records):
         extract = ffmpeg_extractor(config.media.ffmpeg)
 
@@ -97,7 +122,7 @@ def build_pack(
     count = {
         intake: sum(entry["intake"] == intake for entry in entries) for intake in ("images", "text", "media")
     }
-    return PackResult(pack_id, final, len(entries), count["images"], count["text"], count["media"])
+    return PackResult(pack_id, final, len(entries), count["images"], count["text"], count["media"], held)
 
 
 def _recording(record: PostRecord, workspace: Path) -> Path | None:

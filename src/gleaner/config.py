@@ -13,6 +13,7 @@ WORKSPACE_ENV = "GLEANER_HOME"
 MAX_NOTES_CAP = 40
 """Two search pages of 20 posts (four of Douyin's 10) per keyword."""
 NOWCODER_MAX_SCAN_PAGES = 25
+MAX_AUTO_RECORDINGS = 10
 LOGIN_TYPES = ("qrcode", "phone", "cookie")
 
 
@@ -56,6 +57,15 @@ class MediaConfig:
 
 
 @dataclass(frozen=True)
+class AutoConfig:
+    """`gleaner auto`: which platforms one run covers and how many recordings it downloads."""
+
+    platforms: tuple[str, ...] = ()
+    """Platform codes in the order to crawl; empty means every platform."""
+    max_recordings: int = 2
+
+
+@dataclass(frozen=True)
 class HandoffConfig:
     bank: Path | None = None
     ibank: Path | None = None
@@ -77,6 +87,7 @@ class Config:
     nowcoder: NowcoderConfig = field(default_factory=NowcoderConfig)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
+    auto: AutoConfig = field(default_factory=AutoConfig)
     handoff: HandoffConfig = field(default_factory=HandoffConfig)
 
 
@@ -107,6 +118,7 @@ def parse_config(data: dict, workspace: Path) -> Config:
     nowcoder = _table(data, "nowcoder")
     screening = _table(data, "screening")
     media = _table(data, "media")
+    auto = _table(data, "auto")
     handoff = _table(data, "handoff")
 
     max_notes = _int(crawler, "max_notes", 20, "mediacrawler.max_notes")
@@ -131,6 +143,10 @@ def parse_config(data: dict, workspace: Path) -> Config:
     download_images = nowcoder.get("download_images", True)
     if not isinstance(download_images, bool):
         raise GleanerError("nowcoder.download_images 必须是 true 或 false")
+
+    max_recordings = _int(auto, "max_recordings", 2, "auto.max_recordings")
+    if not 0 <= max_recordings <= MAX_AUTO_RECORDINGS:
+        raise GleanerError(f"auto.max_recordings 必须在 0 到 {MAX_AUTO_RECORDINGS} 之间")
 
     return Config(
         workspace=workspace,
@@ -166,6 +182,10 @@ def parse_config(data: dict, workspace: Path) -> Config:
             download_timeout_seconds=max(
                 300, _int(media, "download_timeout_seconds", 3600, "media.download_timeout_seconds")
             ),
+        ),
+        auto=AutoConfig(
+            platforms=tuple(dict.fromkeys(_strings(auto, "platforms", [], "auto.platforms"))),
+            max_recordings=max_recordings,
         ),
         handoff=HandoffConfig(
             bank=_path(handoff.get("bank"), workspace),

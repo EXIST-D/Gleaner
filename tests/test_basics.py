@@ -127,6 +127,7 @@ class ConfigTest(unittest.TestCase):
             (config.handoff.transcribe_python, config.handoff.asr_model), ("python3", "large-v3-turbo")
         )
         self.assertEqual(config.screening.recording_terms, ())
+        self.assertEqual((config.auto.platforms, config.auto.max_recordings), ((), 2))
 
     def test_media_commands_are_names_or_workspace_paths(self):
         workspace = Path("/tmp/ws")
@@ -156,6 +157,19 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(
             (config.nowcoder.timeout_seconds, config.nowcoder.request_interval_seconds), (60, 2.0)
         )
+
+    def test_auto_platforms_and_recordings(self):
+        workspace = Path("/tmp/ws")
+        config = make_config(workspace, auto={"platforms": ["bili", "xhs", "bili"], "max_recordings": 0})
+        self.assertEqual((config.auto.platforms, config.auto.max_recordings), (("bili", "xhs"), 0))
+        for values in (
+            {"max_recordings": 11},
+            {"max_recordings": -1},
+            {"max_recordings": "2"},
+            {"platforms": "xhs"},
+        ):
+            with self.subTest(values), self.assertRaises(GleanerError):
+                make_config(workspace, auto=values)
 
     def test_relative_paths_resolve_against_workspace(self):
         config = parse_config({"handoff": {"bank": "../bank"}}, Path("/tmp/ws"))

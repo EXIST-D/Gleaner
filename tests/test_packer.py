@@ -6,7 +6,7 @@ from pathlib import Path
 
 from gleaner.audio import audio_command, ffmpeg_extractor
 from gleaner.errors import GleanerError
-from gleaner.packer import PACK_SCHEMA, build_pack
+from gleaner.packer import PACK_SCHEMA, build_pack, packable
 from gleaner.pipeline import import_export
 from gleaner.store import Store
 from tests.support import (
@@ -190,6 +190,35 @@ class RecordingPackTest(WorkspaceTestCase):
         self.assertEqual(
             (manifest["posts"][0]["intake"], manifest["posts"][0]["notes"]), ("text", ["media-missing"])
         )
+
+
+class HeldRecordingTest(WorkspaceTestCase):
+    """A recording packed before its video is downloaded would only import its title, and never be downloaded."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = make_config(self.workspace)
+        source = write_records(self.workspace / "external", "bili", [BILI_RECORDING])
+        write_export(source, [INTERVIEW_NOTE])
+        with Store.open(self.workspace, create=True) as store:
+            import_export(store, self.config, source, now=NOW)
+
+    def test_default_packing_leaves_recordings_that_are_not_downloaded(self):
+        with Store.open(self.workspace) as store:
+            ready, held = packable(store)
+            self.assertEqual(([record.post.key for record in ready], held), (["xhs:aa01"], 1))
+            result = build_pack(store, self.config, now=NOW)
+            self.assertEqual((result.posts, result.held_recordings), (1, 1))
+            self.assertEqual(result.as_dict()["held_recordings"], 1)
+            self.assertIsNone(store.get("bili:1150000002").packed_in)
+
+            with self.assertRaisesRegex(GleanerError, "有 1 个录音还没下载，先运行 gleaner media"):
+                build_pack(store, self.config, now=NOW)
+
+    def test_a_recording_can_still_be_packed_by_key(self):
+        with Store.open(self.workspace) as store:
+            result = build_pack(store, self.config, now=NOW, keys=["bili:1150000002"])
+        self.assertEqual((result.posts, result.held_recordings), (1, 0))
 
 
 class AudioTest(WorkspaceTestCase):
