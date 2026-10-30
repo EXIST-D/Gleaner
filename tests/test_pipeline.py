@@ -4,7 +4,6 @@ from datetime import timedelta
 from gleaner.errors import GleanerError
 from gleaner.pipeline import (
     SEARCH_OVERLAP,
-    SOURCE_XHS,
     SearchPlan,
     crawl,
     fetcher_for,
@@ -156,7 +155,9 @@ class PipelineTest(WorkspaceTestCase):
             (run,) = store.runs()
             self.assertEqual((run.status, run.mode), ("ok", "search"))
             self.assertEqual(run.counts["new"], 4)
-            checkpoint = {c["keyword"]: c["latest_published_at"] for c in store.checkpoints(SOURCE_XHS)}
+            checkpoint = {
+                c["keyword"]: c["latest_published_at"] for c in store.checkpoints(source_name("xhs"))
+            }
             self.assertEqual(checkpoint["后端 面经"], "2026-10-24T00:00:00+00:00")
 
     def test_run_records_the_real_page_based_plan(self):
@@ -246,7 +247,8 @@ class PipelineTest(WorkspaceTestCase):
                 platforms, {"mediacrawler-xhs": "xhs", "mediacrawler-bili": "bili", "nowcoder": "nowcoder"}
             )
             self.assertEqual(
-                {c["source"] for c in store.checkpoints()}, {SOURCE_XHS, "mediacrawler-bili", "nowcoder"}
+                {c["source"] for c in store.checkpoints()},
+                {source_name("xhs"), "mediacrawler-bili", "nowcoder"},
             )
 
     def test_unknown_platform_is_rejected(self):

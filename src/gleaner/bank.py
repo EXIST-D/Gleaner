@@ -1,7 +1,7 @@
 """Read the collected bank through Interview Bank's public command line (read-only).
 
-Only `search --format jsonl --detail`, `show` and `taxonomy` are used, so the bank's own locking and format
-rules apply and Gleaner never touches its JSONL files.
+Only `search --format jsonl --detail`, `show`, `taxonomy` and `sources` are used, so the bank's own locking and
+format rules apply and Gleaner never touches its JSONL files.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from gleaner.config import HandoffConfig
@@ -53,11 +54,24 @@ ANSWER_STATUSES = {
 }
 
 
+SOURCES_PAGE = 200
+
+
+@dataclass(frozen=True)
+class Held:
+    """What the bank holds from one post (its source URL)."""
+
+    sources: int
+    occurrences: int
+    questions: int
+
+
 class BankReader:
     def __init__(self, handoff: HandoffConfig):
         self.handoff = handoff
         self._lock = threading.Lock()
         self._questions: tuple[tuple, list[dict]] | None = None
+        self._held: tuple[tuple, dict[str, Held]] | None = None
         self._domains: dict[str, dict] | None = None
 
     @property
@@ -84,6 +98,38 @@ class BankReader:
         with self._lock:
             self._questions = (signature, rows)
         return rows
+
+    def held(self) -> dict[str, Held]:
+        """Source URL -> what the bank holds from it, cached until the bank's data files change.
+
+        Needs an Interview Bank with the `sources` command; a source counts once it is committed.
+        """
+        signature = self._signature()
+        with self._lock:
+            if self._held and self._held[0] == signature:
+                return self._held[1]
+        counts: dict[str, list[int]] = {}
+        offset, total = 0, None
+        while total is None or offset < total:
+            output = self._run(["sources", "--limit", str(SOURCES_PAGE), "--offset", str(offset), "--json"])
+            data = json.loads(output)
+            if not data.get("ok"):
+                raise GleanerError(data.get("error") or "Interview Bank 读取失败")
+            result = data["result"]
+            total = result["total"]
+            for source in result["sources"]:
+                if source.get("source_url"):
+                    row = counts.setdefault(source["source_url"], [0, 0, 0])
+                    row[0] += 1
+                    row[1] += source["occurrences"]
+                    row[2] += source["questions"]
+            if not result["sources"]:
+                break
+            offset += len(result["sources"])
+        held = {url: Held(*row) for url, row in counts.items()}
+        with self._lock:
+            self._held = (signature, held)
+        return held
 
     def question(self, question_id: str) -> dict:
         if not re.fullmatch(r"q_[0-9a-f]{32}", question_id):

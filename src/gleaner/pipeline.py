@@ -21,7 +21,6 @@ from gleaner.store import Store
 from gleaner.timeutil import CHINA_TZ, iso, new_id, parse_iso
 
 CRAWL_PLATFORMS = (*mediacrawler.PLATFORMS, "nowcoder")
-SOURCE_XHS = "mediacrawler-xhs"
 SEARCH_OVERLAP = timedelta(days=1)
 """Incremental searches reach this far behind the last search: platforms index new posts with a delay."""
 

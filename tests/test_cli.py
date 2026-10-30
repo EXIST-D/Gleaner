@@ -242,6 +242,19 @@ class CliTest(WorkspaceTestCase):
         self.assertFalse(checks["ibank"])
         self.assertFalse(checks["bank"])
 
+    def test_doctor_checks_the_platforms_of_auto(self):
+        self.call("init")
+        checks = {check["name"]: check for check in json.loads(self.call("doctor", "--json")[1])["checks"]}
+        self.assertEqual((checks["auto"]["ok"], checks["auto"]["detail"]), (True, "全部平台"))
+        config = self.workspace / "gleaner.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace("platforms = []", 'platforms = ["bili", "weibo"]'),
+            encoding="utf-8",
+        )
+        checks = {check["name"]: check for check in json.loads(self.call("doctor", "--json")[1])["checks"]}
+        self.assertFalse(checks["auto"]["ok"])
+        self.assertIn("不认识 weibo", checks["auto"]["detail"])
+
     def test_workspace_from_environment(self):
         out = io.StringIO()
         with (

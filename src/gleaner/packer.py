@@ -48,17 +48,17 @@ class PackResult:
 
 
 def packable(
-    store: Store, *, labels: list[str] | None = None, limit: int = DEFAULT_LIMIT
+    store: Store, *, labels: list[str] | None = None, limit: int | None = DEFAULT_LIMIT
 ) -> tuple[list[PostRecord], int]:
     """Unpacked posts with the labels (default: candidates) that are ready to pack, newest first, and how
-    many recordings are held back.
+    many recordings are held back (limit None: all of them).
 
     A recording packed before its video is downloaded would only import its title and, once packed, is never
     downloaded again, so it waits for `gleaner media`.
     """
     records = store.posts(labels=labels or ["candidate"], packed=False)
     ready = [record for record in records if not awaiting_download(record)]
-    return ready[:limit], len(records) - len(ready)
+    return ready if limit is None else ready[:limit], len(records) - len(ready)
 
 
 def build_pack(

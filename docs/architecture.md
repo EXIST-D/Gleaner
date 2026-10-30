@@ -23,7 +23,8 @@
 | `audio.py` | 用 ffmpeg 把录音视频转成单声道、响度均衡的 `audio.flac`；打包器接受替换的提取函数，测试不需要 ffmpeg |
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor`、`setup` 和网页共用；补丁用 `git apply --reverse --check` 判断是否已打上 |
-| `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告 |
+| `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy`、`sources` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告；`held()` 给出每个来源链接在题库里有几个来源、几道题 |
+| `imports.py` | 把帖子和题库已有的来源按链接对照：手工导入的帖子记成「手工导入」，列出还在等导入的素材包 |
 | `devnotes.py` | 进度页的数据：工作区的 `开发进度.md`（或开发手册的「当前状态」）、CHANGELOG 的「未发布」、`git log` 和未提交/未推送数；意见追加到工作区的 `意见.md` |
 | `web/server.py` | 标准库 HTTP 服务：只监听本机、Host 校验、写操作令牌、CSP；JSON 接口与静态文件 |
 | `web/jobs.py` | 后台抓取任务：同一时间只跑一个，日志按行号增量轮询，可停止（MediaCrawler 结束子进程，牛客在下一个请求前停下） |
@@ -75,7 +76,7 @@
 所以默认选帖时把它们留下（`packer.packable`），`gleaner pack --key` 明确指定时才打。
 两次自动运行重叠会把同一批帖子打两次包、让题目重复计数，所以用 `auto.lock`（`O_EXCL` 创建，12 小时后算崩溃遗留）互斥；
 没用进程号判断，因为 Windows 上 `os.kill(pid, 0)` 会结束进程。
-不经素材包、手工导入题库的帖子用 `mark-imported` 把 `packed_in` 记成“手工导入”，Gleaner 没有别的办法知道它们已经进了题库。
+题库有没有这篇帖子不靠手记，而是向 Interview Bank 的只读 `sources` 命令要来已提交的来源，按链接（`source_url` 就是帖子的稳定链接）对照（`imports.py`）；`auto` 每次先对照再下载和打包。没提交过的来源（例如录音转写了还没抽题）不在列表里，所以算「没导入」。不经素材包、手工导入题库的帖子用 `mark-imported` 把 `packed_in` 记成“手工导入”，Gleaner 没有别的办法知道它们已经进了题库。
 
 **失败是“降级”，不是崩溃。** 登录过期、滑块验证、超时、退出码非 0、没有产出，都记为 `degraded` 并写明原因；
 已经产出的数据照常导入。退出码 3 让脚本能区分降级和真正的错误。
@@ -105,7 +106,7 @@ github、leetcode、各平台自身等常见域名和邮箱地址不计数。
 **发布日期不是面试日期。** 素材包只提供 `source_date`（按北京时间换算的发布日期）。
 面试日期、公司、轮次需要 Interview Bank 在原文里找到依据才填写。
 
-**题库页面只通过 Interview Bank 的公开命令读取。** Gleaner 不直接解析题库的 JSONL，这样题库升级格式、
+**题库页面和导入对照只通过 Interview Bank 的公开命令读取。** Gleaner 不直接解析题库的 JSONL，这样题库升级格式、
 加锁或校验规则变化时，页面不会读到半写入的数据，也不需要跟着改。题目列表按 `data/` 下文件的修改时间缓存；
 来源截图只按“64 位哈希 + 图片后缀”的文件名从题库 `media/` 目录提供。
 Interview Bank 认不出公司时记成 `id` 为空的 `unknown`，列表不把它当公司；出现记录按 `source_type` 标出正文、截图或录音转写。

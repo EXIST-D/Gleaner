@@ -3,10 +3,11 @@ import sys
 import unittest
 
 from gleaner.config import load_config
+from gleaner.packer import build_pack
 from gleaner.pipeline import import_export
 from gleaner.store import Store
 from gleaner.web.server import WebApp
-from tests.support import NOW, WorkspaceTestCase, write_export
+from tests.support import BILI_RECORDING, NOW, WorkspaceTestCase, write_export, write_records
 from tests.test_web import init_workspace
 
 IMAGE = "a" * 64 + ".webp"
@@ -127,6 +128,16 @@ TAXONOMY = [
     {"id": "career.behavioral", "label": "行为面试"},
 ]
 
+SOURCES = [
+    {
+        "id": "src_img",
+        "type": "image",
+        "source_url": "https://www.xiaohongshu.com/explore/aa01",
+        "occurrences": 2,
+        "questions": 2,
+    }
+]
+
 FAKE_IBANK = r"""
 import json, sys
 from pathlib import Path
@@ -143,6 +154,9 @@ elif command == "show":
         print(json.dumps({"ok": False, "error": "Unknown question"}))
         sys.exit(2)
     print(json.dumps({"ok": True, "result": fixture["show"]}, ensure_ascii=False))
+elif command == "sources":
+    rows = fixture.get("sources", [])
+    print(json.dumps({"ok": True, "result": {"total": len(rows), "offset": 0, "sources": rows}}))
 elif command == "taxonomy":
     print(json.dumps({"ok": True, "result": {"items": fixture["taxonomy"]}}, ensure_ascii=False))
 elif command == "export":
@@ -173,7 +187,10 @@ class BankPageTest(WorkspaceTestCase):
         self.ibank = tools / "ibank.py"
         self.ibank.write_text(FAKE_IBANK, encoding="utf-8")
         (tools / "fixture.json").write_text(
-            json.dumps({"questions": QUESTIONS, "show": SHOW, "taxonomy": TAXONOMY}, ensure_ascii=False),
+            json.dumps(
+                {"questions": QUESTIONS, "show": SHOW, "taxonomy": TAXONOMY, "sources": SOURCES},
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
         config = self.ws / "gleaner.toml"
@@ -195,6 +212,26 @@ class BankPageTest(WorkspaceTestCase):
 
     def calls(self) -> list[str]:
         return (self.ibank.parent / "calls.log").read_text(encoding="utf-8").splitlines()
+
+    def test_packs_show_how_many_posts_the_bank_already_holds(self):
+        with Store.open(self.ws) as store:
+            build_pack(store, load_config(self.ws), now=NOW, keys=["xhs:aa01", "xhs:cc03"])
+        _, data = self.get("/api/packs")
+        (pack,) = data["packs"]
+        self.assertEqual((pack["posts"], pack["imported"]), (2, 1))
+        self.ibank.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+        self.app._bank = None
+        self.assertIsNone(
+            self.get("/api/packs")[1]["packs"][0]["imported"], "a bank that cannot be asked shows nothing"
+        )
+
+    def test_unpacked_candidates_leave_out_recordings_still_to_download(self):
+        before = self.get("/api/overview")[1]["unpacked_candidates"]
+        with Store.open(self.ws) as store:
+            export = write_records(self.workspace / "bili-export", "bili", [BILI_RECORDING])
+            import_export(store, load_config(self.ws), export, now=NOW)
+            self.assertEqual(store.get("bili:1150000002").label, "candidate")
+        self.assertEqual(self.get("/api/overview")[1]["unpacked_candidates"], before)
 
     def test_list_summary_topics_and_exclusions(self):
         _, data = self.get("/api/bank")

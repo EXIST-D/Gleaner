@@ -16,8 +16,10 @@ from datetime import datetime
 from pathlib import Path
 
 from gleaner.audio import Extractor
+from gleaner.bank import BankReader
 from gleaner.config import Config
 from gleaner.errors import GleanerError
+from gleaner.imports import ImportReport, sync_imports
 from gleaner.models import PLATFORMS
 from gleaner.packer import PackResult, build_pack, packable
 from gleaner.pipeline import (
@@ -69,6 +71,8 @@ class AutoOutcome:
     pack: PackResult | None = None
     held_recordings: int = 0
     """Recordings flagged but not downloaded, so not packed yet."""
+    imports: ImportReport | None = None
+    """What the bank holds, when it could be asked: packs still waiting for their import are in `waiting`."""
 
     @property
     def degraded(self) -> bool:
@@ -80,6 +84,7 @@ class AutoOutcome:
             "steps": [step.as_dict() for step in self.steps],
             "pack": self.pack.as_dict() if self.pack else None,
             "held_recordings": self.held_recordings,
+            "imports": self.imports.as_dict() if self.imports else None,
         }
 
 
@@ -137,6 +142,7 @@ def run_auto(
     sleep: Callable[[float], None] = time.sleep,
     fetcher_factory: FetcherFactory = fetcher_for,
     extract: Extractor | None = None,
+    bank: BankReader | None = None,
 ) -> AutoOutcome:
     """Crawl, download recordings, pack. Unattended unless `attended`: a run never waits for a QR code scan.
 
@@ -154,6 +160,9 @@ def run_auto(
         for platform in selected:
             say(f"抓取{PLATFORMS[platform].label}…")
             outcome.steps.append(_crawl(store, config, platform, factory, force, full, clock))
+        reader = bank or BankReader(config.handoff)
+        if step := _imports(store, reader, clock, outcome):
+            outcome.steps.append(step)
         if download and "bili" in selected:
             blocked = any(
                 step.kind == "crawl" and step.platform == "bili" and step.status in FAILED
@@ -165,7 +174,39 @@ def run_auto(
             outcome.steps.append(step)
         else:
             outcome.held_recordings = packable(store)[1]
+        if outcome.imports:
+            latest = _imports_report(store, reader, clock, adopt=False)
+            if latest:
+                latest.adopted = outcome.imports.adopted
+                outcome.imports = latest
     return outcome
+
+
+def _imports_report(store: Store, reader: BankReader, clock: Callable, *, adopt: bool) -> ImportReport | None:
+    if reader.problem():
+        return None
+    try:
+        return sync_imports(store, reader.held(), now=clock(), adopt=adopt)
+    except GleanerError:
+        return None
+
+
+def _imports(store: Store, reader: BankReader, clock: Callable, outcome: AutoOutcome) -> Step | None:
+    """Ask the bank what it holds, so posts imported by hand are neither downloaded nor packed again.
+
+    Never makes the run fail: an Interview Bank without the `sources` command only skips this step, and a bank
+    that is not configured at all leaves it out.
+    """
+    if reader.problem():
+        return None
+    try:
+        report = sync_imports(store, reader.held(), now=clock())
+    except GleanerError as exc:
+        return Step("imports", "", "skipped", f"没能读到题库里的来源，下面按没导入处理：{exc}")
+    outcome.imports = report
+    return Step(
+        "imports", "", "ok", f"题库已有 {report.holding} 篇帖子，新记手工导入 {len(report.adopted)} 篇"
+    )
 
 
 def _crawl(
@@ -273,3 +314,48 @@ def _pack(
     except GleanerError as exc:
         return Step("pack", "", "failed", str(exc)), None, held
     return Step("pack", "", "ok", f"{result.pack_id}：{result.posts} 篇"), result, held
+
+
+_STATUS_TITLES = {"ok": "完成", "degraded": "降级", "failed": "没能运行", "skipped": "跳过"}
+
+
+def outcome_lines(outcome: AutoOutcome) -> list[str]:
+    """The run for the terminal: one line per step, then the pack to hand over and what still waits."""
+    lines = []
+    for step in outcome.steps:
+        if step.kind == "crawl":
+            what = f"抓取{PLATFORMS[step.platform].label}"
+            detail = f"读到 {step.records} 条，新增 {step.new}" if step.status in ("ok", "degraded") else ""
+        elif step.kind == "media":
+            what = f"下载录音 {step.post}"
+            detail = f"下载到 {step.media} 个音视频" if step.status in ("ok", "degraded") else ""
+        elif step.kind == "imports":
+            what, detail = "对照题库", ""
+        else:
+            what, detail = "打包", ""
+        shown = step.message if step.status != "ok" or step.kind in ("pack", "imports") else ""
+        lines.append(
+            f"{what}：{_STATUS_TITLES[step.status]}"
+            + "".join(f"；{part}" for part in (detail, shown) if part)
+        )
+    if outcome.pack:
+        pack = outcome.pack
+        recordings = f"，转写录音 {pack.media_posts}" if pack.media_posts else ""
+        lines += [
+            f"素材包 {pack.pack_id}：{pack.posts} 篇（看图 {pack.image_posts}，读正文 {pack.text_posts}{recordings}）",
+            f"把 {pack.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
+        ]
+    if outcome.held_recordings:
+        lines.append(
+            f"还有 {outcome.held_recordings} 个录音没下载，所以没打包；下载后再运行 gleaner auto 或 gleaner pack。"
+        )
+    if outcome.imports and outcome.imports.waiting:
+        waiting = outcome.imports.waiting
+        lines.append(
+            f"{len(waiting)} 个素材包还在等导入："
+            + "；".join(
+                f"{pack}（{len(keys)}/{outcome.imports.pack_sizes[pack]} 篇不在题库里）"
+                for pack, keys in waiting.items()
+            )
+        )
+    return lines

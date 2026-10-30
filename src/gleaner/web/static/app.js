@@ -727,6 +727,13 @@ async function packSelected() {
 
 /* ---------- Packs ---------- */
 
+function packImport(p) {
+  if (p.imported == null) return "";
+  return p.imported >= p.posts
+    ? `<span class="pill text" title="这个包的帖子都已经在采集题库里">已全部导入</span>`
+    : `<span class="pill" title="这些帖子的链接还不在采集题库里">待导入 ${p.posts - p.imported} 篇</span>`;
+}
+
 async function renderPacks() {
   const { packs } = await api("/api/packs");
   $("#view-packs").innerHTML = `
@@ -736,7 +743,7 @@ async function renderPacks() {
     ${packs.length ? `<div class="grid packs-grid">${packs.map((p) => `
       <div class="card pack-card" data-action="open-pack" data-id="${esc(p.id)}">
         <div class="card-head"><h2>${p.posts} 篇帖子</h2><span class="faint">${esc(fmtTime(p.created_at))}</span></div>
-        <div class="badges"><span class="pill text">读正文 ${p.text_posts}</span><span class="pill">看图 ${p.image_posts}</span>${p.media_posts ? `<span class="pill text">转写录音 ${p.media_posts}</span>` : ""}</div>
+        <div class="badges"><span class="pill text">读正文 ${p.text_posts}</span><span class="pill">看图 ${p.image_posts}</span>${p.media_posts ? `<span class="pill text">转写录音 ${p.media_posts}</span>` : ""}${packImport(p)}</div>
         <ul>${p.titles.map((t) => `<li>${esc(t)}</li>`).join("")}${p.posts > p.titles.length ? `<li class="faint">还有 ${p.posts - p.titles.length} 篇</li>` : ""}</ul>
         <div class="id">${esc(p.id)}</div>
       </div>`).join("")}</div>` : `<div class="card empty">还没有素材包。在「帖子」里勾选帖子，然后点「打包所选」。</div>`}`;

@@ -29,7 +29,7 @@ from gleaner.config import MAX_NOTES_CAP, Config, load_config
 from gleaner.devnotes import add_feedback, dev_status
 from gleaner.errors import GleanerError
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
-from gleaner.packer import build_pack
+from gleaner.packer import build_pack, packable
 from gleaner.pipeline import (
     CRAWL_PLATFORMS,
     default_max_notes,
@@ -217,6 +217,16 @@ class WebApp:
             self._bank = BankReader(handoff)
         return self._bank
 
+    def _held(self) -> dict | None:
+        """What the bank holds by source URL, or None when it cannot be asked (not set up, too old)."""
+        reader = self._reader()
+        if reader.problem():
+            return None
+        try:
+            return reader.held()
+        except GleanerError:
+            return None
+
     def bank_questions(self, _query: dict) -> dict:
         reader = self._reader()
         problem = reader.problem()
@@ -332,7 +342,7 @@ class WebApp:
             stats = store.stats()
             runs = store.runs(limit=8)
             checkpoints = store.checkpoints()
-            unpacked = len(store.posts(labels=["candidate"], packed=False))
+            unpacked = len(packable(store, limit=None)[0])
             platforms = [_platform_option(store, config, code, now) for code in CRAWL_PLATFORMS]
         job = self.jobs.current
         return {
@@ -442,6 +452,7 @@ class WebApp:
         return {"job": job.snapshot(since) if job else None}
 
     def packs(self, _query: dict) -> dict:
+        held = self._held()
         found = []
         for manifest_path in sorted((self.workspace / "packs").glob("pack-*/manifest.json"), reverse=True):
             try:
@@ -457,6 +468,9 @@ class WebApp:
                     "image_posts": sum(entry.get("intake") == "images" for entry in entries),
                     "text_posts": sum(entry.get("intake") == "text" for entry in entries),
                     "media_posts": sum(entry.get("intake") == "media" for entry in entries),
+                    "imported": None
+                    if held is None
+                    else sum(entry.get("source_url") in held for entry in entries),
                     "titles": [entry.get("title", "") for entry in entries[:4]],
                 }
             )

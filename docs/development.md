@@ -145,8 +145,7 @@ git push
    Chrome 窗口弹出会不会打扰。同一时间只能在一台电脑上抓取（见第 3 节）。
 2. 采集题库里大部分题还没有参考答案（`ibank.py stats` 的 `answer_status.missing`；目前只有智能体领域补过）。做法：Interview Bank 的 `research` 生成任务 → 查一手资料 →
    `page-text` 存原文 → `answer --page-texts --commit`；项目类题只给答题框架，不编经历。
-3. 记录素材包有没有导入题库：Interview Bank 现在没有列出已导入来源的命令，Gleaner 只能知道打过包，
-   导入后要靠 `开发进度.md` 手记（手工导入的帖子可以用 `gleaner mark-imported` 记在数据库里）。需要 Interview Bank 先提供一个只读的来源列表。
+3. 记录素材包有没有导入题库：已做（`gleaner imports`，依赖 Interview Bank 的 `sources` 命令，那边的改动在 Interview Bank 工作区里还没提交）。真实对照里有 4 篇已打包的帖子不在题库里，需要你判断是漏导还是有意不导。
 4. 有几个 B 站视频从标题看不出是不是录音，可以打开看看，是的话用 `gleaner media <帖子键>` 下载。
 5. 在 Windows 上真实跑一遍 `gleaner setup`；知乎真实增量搜一次。
 6. 可选的大模型复判：规则拿不准（`unclear`）的帖子再交给模型判断。

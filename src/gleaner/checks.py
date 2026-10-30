@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from gleaner.audio import find_ffmpeg
 from gleaner.config import Config
 from gleaner.installer import APPLIED, CONFLICT, MODERN_PYTHON, make_run, patch_files, patch_states
+from gleaner.pipeline import CRAWL_PLATFORMS
 from gleaner.sources.mediacrawler import MediaCrawlerDriver
 
 
@@ -43,6 +44,7 @@ def environment_checks(config: Config) -> list[Check]:
         Check(
             "keywords", "默认关键词", bool(config.keywords), "、".join(config.keywords) or "没有默认关键词"
         ),
+        auto_check(config),
         Check(
             "ibank",
             "Interview Bank",
@@ -64,6 +66,16 @@ def environment_checks(config: Config) -> list[Check]:
             asr_python,
         ),
     ]
+
+
+def auto_check(config: Config) -> Check:
+    title = "自动运行的平台（[auto] platforms）"
+    unknown = [code for code in config.auto.platforms if code not in CRAWL_PLATFORMS]
+    if unknown:
+        return Check(
+            "auto", title, False, f"不认识 {'、'.join(unknown)}，可选：{' / '.join(CRAWL_PLATFORMS)}"
+        )
+    return Check("auto", title, True, "、".join(config.auto.platforms) or "全部平台")
 
 
 def python_check(python: str) -> Check:

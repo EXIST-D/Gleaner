@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gleaner import __version__
-from gleaner.auto import AutoOutcome, chosen_platforms, run_auto
+from gleaner.auto import chosen_platforms, outcome_lines, run_auto
+from gleaner.bank import BankReader
 from gleaner.checks import environment_checks
 from gleaner.config import (
     CONFIG_NAME,
@@ -18,6 +19,7 @@ from gleaner.config import (
     validate_keywords,
 )
 from gleaner.errors import GleanerError
+from gleaner.imports import sync_imports
 from gleaner.installer import PARTS, Installer, make_run
 from gleaner.models import LABEL_TITLES, LABELS, PLATFORMS, PostRecord
 from gleaner.packer import DEFAULT_LIMIT, MANUAL_IMPORT, build_pack, packable
@@ -164,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=DEFAULT_LIMIT, help=f"最多打包多少篇，默认 {DEFAULT_LIMIT}"
     )
     pack.add_argument("--bank", type=Path, help="采集题库目录；默认用配置里的 handoff.bank")
+
+    imports = command(
+        "imports",
+        cmd_imports,
+        "对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；手工导入的帖子顺便记下",
+    )
+    imports.add_argument("--dry-run", action="store_true", help="只列出，不把手工导入的帖子记进数据库")
 
     imported_by_hand = command(
         "mark-imported",
@@ -315,7 +324,7 @@ def cmd_auto(args) -> int:
             echo=not (args.quiet or args.json),
             say=say,
         )
-    _emit(args, outcome.as_dict(), _auto_text(outcome))
+    _emit(args, outcome.as_dict(), outcome_lines(outcome))
     return EXIT_DEGRADED if outcome.degraded else 0
 
 
@@ -348,37 +357,6 @@ def _auto_plan(store: Store, config, platforms: list[str], *, download: bool, fo
         "held_recordings": held,
     }
     return data, text
-
-
-def _auto_text(outcome: AutoOutcome) -> list[str]:
-    titles = {"ok": "完成", "degraded": "降级", "failed": "没能运行", "skipped": "跳过"}
-    lines = []
-    for step in outcome.steps:
-        if step.kind == "crawl":
-            what = f"抓取{_platform_label(step.platform)}"
-            detail = f"读到 {step.records} 条，新增 {step.new}" if step.status in ("ok", "degraded") else ""
-        elif step.kind == "media":
-            what = f"下载录音 {step.post}"
-            detail = f"下载到 {step.media} 个音视频" if step.status in ("ok", "degraded") else ""
-        else:
-            what = "打包"
-            detail = ""
-        reason = step.message if step.status != "ok" or step.kind == "pack" else ""
-        lines.append(
-            f"{what}：{titles[step.status]}" + "".join(f"；{part}" for part in (detail, reason) if part)
-        )
-    if outcome.pack:
-        pack = outcome.pack
-        recordings = f"，转写录音 {pack.media_posts}" if pack.media_posts else ""
-        lines += [
-            f"素材包 {pack.pack_id}：{pack.posts} 篇（看图 {pack.image_posts}，读正文 {pack.text_posts}{recordings}）",
-            f"把 {pack.path / 'HANDOFF.md'} 交给装了 interview-bank 的 Agent 导入采集题库。",
-        ]
-    if outcome.held_recordings:
-        lines.append(
-            f"还有 {outcome.held_recordings} 个录音没下载，所以没打包；下载后再运行 gleaner auto 或 gleaner pack。"
-        )
-    return lines
 
 
 def cmd_media(args) -> int:
@@ -490,6 +468,24 @@ def cmd_pack(args) -> int:
     if result.held_recordings:
         text.append(f"还有 {result.held_recordings} 个录音没下载，所以没打包；先运行 gleaner media，再打包。")
     return _emit(args, {"ok": True, **result.as_dict()}, text)
+
+
+def cmd_imports(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    reader = BankReader(config.handoff)
+    with Store.open(config.workspace) as store:
+        report = sync_imports(store, reader.held(), now=utc_now(), adopt=not args.dry_run)
+    text = [f"题库里已有 {report.holding} 篇 Gleaner 的帖子，共 {report.questions} 道题"]
+    if report.adopted:
+        verb = "会记下" if args.dry_run else "已记下"
+        text.append(
+            f"{len(report.adopted)} 篇没经过素材包，是手工导入的，{verb}：{'、'.join(report.adopted)}"
+        )
+    for pack, keys in report.waiting.items():
+        text.append(f"素材包 {pack}：{len(keys)}/{report.pack_sizes[pack]} 篇还没进题库：{'、'.join(keys)}")
+    if not report.waiting:
+        text.append("没有等待导入的素材包")
+    return _emit(args, {"ok": True, **report.as_dict(), "dry_run": args.dry_run}, text)
 
 
 def cmd_mark_imported(args) -> int:
