@@ -24,6 +24,7 @@
 | `bodytext.py` | 识别正文里已经列出的题目，决定读正文还是看图 |
 | `checks.py` | 环境检查，`doctor`、`setup` 和网页共用；补丁用 `git apply --reverse --check` 判断是否已打上 |
 | `bank.py` | 访问采集题库：调用 Interview Bank 的 `search --format jsonl --detail`、`show`、`taxonomy`、`sources` 读取（按数据文件变化缓存），用 `export` 生成 Markdown 报告；`held()` 给出每个来源链接在题库里有几个来源、几道题 |
+| `bank.py` 的 `export_bundle` | `gleaner bundle`：转交 Interview Bank 的 `export-bundle`，生成纯文字题目包，交给另一个题库用 `import-bundle` 去重导入 |
 | `glossary.py` | 转写常被听错的术语表（内置 + `[glossary] extra`），写进有录音的素材包的 HANDOFF.md；转写文本留在题库里不改写，由 Agent 对照表改错并写进 `correction` |
 | `imports.py` | 把帖子和题库已有的来源按链接对照：手工导入的帖子记成 `disposition = manual`，列出还在等导入的素材包；`--mark/--skip/--clear` 改记录 |
 | `devnotes.py` | 进度页的数据：工作区的 `开发进度.md`（或开发手册的「当前状态」）、CHANGELOG 的「未发布」、`git log` 和未提交/未推送数；意见追加到工作区的 `意见.md` |

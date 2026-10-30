@@ -200,6 +200,33 @@ class SyncTest(BankWithSources):
         return json.loads(out.getvalue())
 
 
+class BundleCommandTest(BankWithSources):
+    def test_bundle_asks_interview_bank_for_the_text_only_export(self):
+        (self.tools / "ibank.py").write_text(
+            "import json, sys\nfrom pathlib import Path\nargs = sys.argv[1:]\n"
+            "assert args[0] == 'export-bundle'\nout = Path(args[args.index('--output') + 1])\n"
+            "out.write_text('{}', encoding='utf-8')\n"
+            "print(json.dumps({'ok': True, 'result': {'output': str(out), 'counts': {'questions': 5, 'occurrences': 6,"
+            " 'sources': 2, 'companies': 3, 'relations': 1}}}))\n",
+            encoding="utf-8",
+        )
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["--workspace", str(self.workspace), "bundle", "--json"]), 0)
+        data = json.loads(out.getvalue())
+        self.assertTrue(data["output"].startswith(str(self.workspace / "bundles" / "questions-")))
+        self.assertEqual((data["counts"]["questions"], data["counts"]["companies"]), (5, 3))
+        self.assertTrue((self.workspace / "bundles").is_dir())
+        target = self.workspace / "mine" / "q.json"
+        with contextlib.redirect_stdout(io.StringIO()) as text:
+            self.assertEqual(main(["--workspace", str(self.workspace), "bundle", "--output", str(target)]), 0)
+        self.assertIn("没有图片和答案", text.getvalue())
+        self.assertTrue(target.is_file())
+
+
 class AutoImportsTest(BankWithSources):
     def drive(self, store, drivers, **kwargs):
         self.clock = getattr(self, "clock", Clock())

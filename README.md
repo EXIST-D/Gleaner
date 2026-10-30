@@ -135,6 +135,22 @@ schtasks /Create /SC DAILY /ST 09:30 /TN Gleaner /TR "cmd /c cd /d C:\path\to\Gl
 另外同一份数据库只能在一台机器上抓（SQLite 没有合并工具）；云端和本机各抓一部分的话，要换着用时整份 `workspace/` 拷过去。
 网页概览的「最近一次自动运行」读的是 `workspace/last-auto.json`，所以它显示的是这份工作区上最近一次 `gleaner auto`。
 
+### 把题目补充到另一个题库（比如线上的个人面经）
+
+采集题库可以当作个人面经的补充。传过去的只有文字：题目、公司、岗位、轮次、正式还是实习、时间、来源平台和链接，
+**不带图片、答案和转写**（答案由那边自己的 Agent 补）。
+
+```bash
+gleaner bundle                                          # 生成 workspace/bundles/questions-<时间>.json
+python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包> --dry-run   # 先看报告，不写任何东西
+python3 <ibank.py> import-bundle --bank <目标题库> --input <题目包>             # 暂存，并生成去重用的 review sheet
+python3 <ibank.py> ingest finalize --task <任务编号> --decisions <决定文件> --defer-review
+```
+
+导进去的是**新题**，不会自己合并：和目标题库里已有的题相同、相近的，在 review sheet 里逐个判断（合并会让那道题多一次出现，
+抬高它的频次）。同一个题目包导两次，第二次什么也不加。目标是线上的题库时，先备份，先在备份恢复出来的副本上试一遍，
+再决定要不要动线上（Interview Bank 的 `backup`、`tools/deploy/` 里有现成的步骤）。
+
 ## 环境要求
 
 自己准备的只有三样，其余的都由 `gleaner setup` 一条命令装好：
@@ -281,6 +297,7 @@ gleaner --workspace workspace web          # 打开 http://127.0.0.1:8765/
 | `label <key> <label>` | 人工改标签，以后的初筛不会覆盖 |
 | `pack` | 打包（默认只打 `candidate` 且没打过包的帖子；还没下载的录音先留着） |
 | `imports` | 对照采集题库：哪些帖子已经导入、哪些素材包还在等导入；`--mark`、`--skip`、`--clear` 记下手工导入、不打算导入的帖子或去掉记录；`--dry-run` 只列出 |
+| `bundle [--output]` | 把采集题库里的题目（不含图片和答案）导成一个文件，交给另一个 Interview Bank（比如线上的个人题库）去重导入，见下文「导入线上题库」 |
 | `glossary` | 列出转写录音时常被听错的术语（内置的加上 `[glossary] extra`）；有录音的素材包的 HANDOFF.md 里也附这张表 |
 | `web` | 打开本机网页控制台（`--port` 换端口，`--no-open` 不自动打开浏览器） |
 | `stats` / `runs` | 统计与抓取记录 |

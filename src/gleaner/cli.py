@@ -37,7 +37,7 @@ from gleaner.pipeline import (
     seconds_until_next_crawl,
 )
 from gleaner.store import Store
-from gleaner.timeutil import china_date, iso, utc_now
+from gleaner.timeutil import CHINA_TZ, china_date, iso, utc_now
 
 EXIT_DEGRADED = 3
 
@@ -177,6 +177,15 @@ def build_parser() -> argparse.ArgumentParser:
     imports.add_argument("--clear", nargs="+", metavar="KEY", help="去掉上面两种记录")
     imports.add_argument(
         "--dry-run", action="store_true", help="只列出，不记录（对 --mark、--skip、--clear 也一样）"
+    )
+
+    bundle = command(
+        "bundle",
+        cmd_bundle,
+        "把采集题库里的题目（不含图片和答案）导成一个文件，交给另一个 Interview Bank（比如线上的个人题库）去重导入",
+    )
+    bundle.add_argument(
+        "--output", type=Path, help="输出文件，默认 workspace/bundles/questions-<日期时间>.json"
     )
 
     command(
@@ -511,6 +520,24 @@ def cmd_imports(args) -> int:
         text.append("没有等待导入的素材包")
     data = {"ok": True, **report.as_dict(), "dry_run": args.dry_run, "compared": True}
     return _emit(args, data, text)
+
+
+def cmd_bundle(args) -> int:
+    config = load_config(resolve_workspace(args.workspace))
+    output = args.output.expanduser().resolve() if args.output else None
+    if output is None:
+        stamp = utc_now().astimezone(CHINA_TZ).strftime("%Y%m%d-%H%M%S")
+        output = config.workspace / "bundles" / f"questions-{stamp}.json"
+    result = BankReader(config.handoff).export_bundle(output)
+    counts = result["counts"]
+    text = [
+        f"题目包 {output}",
+        f"{counts['questions']} 道题、{counts['occurrences']} 次出现、{counts['sources']} 个来源链接、{counts['companies']} 家公司"
+        "（没有图片和答案）",
+        "导入另一个题库：ibank.py import-bundle --bank <目标题库> --input <这个文件> --dry-run，"
+        "看过报告再去掉 --dry-run，按 review sheet 做决定后 ingest finalize。",
+    ]
+    return _emit(args, {"ok": True, "output": str(output), **result}, text)
 
 
 def cmd_glossary(args) -> int:

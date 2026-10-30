@@ -131,6 +131,14 @@ class BankReader:
             self._held = (signature, held)
         return held
 
+    def export_bundle(self, output: Path) -> dict:
+        """Ask Interview Bank for the text-only question bundle (no media, no answers) another bank can import."""
+        output.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(self._run(["export-bundle", "--output", str(output), "--json"]))
+        if not data.get("ok"):
+            raise GleanerError(data.get("error") or "导出题目包失败")
+        return data["result"]
+
     def question(self, question_id: str) -> dict:
         if not re.fullmatch(r"q_[0-9a-f]{32}", question_id):
             raise GleanerError("题目编号不正确")
