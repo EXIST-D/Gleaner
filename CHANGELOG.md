@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- `gleaner bundle` 的题目包带上合并过的问法（采集题库里被并进别的题的不同写法），导入后阅读器里能看到「合并过的问法」。
 - 新命令 `gleaner bundle`：向 Interview Bank 新增的 `export-bundle` 要来采集题库的纯文字题目包（题目、公司、岗位、轮次、
   实习或正式、时间、来源链接；没有图片、答案和转写），用来补充线上的个人面经；导入和去重用 Interview Bank 的 `import-bundle`；加 `--fill-event-date month` 让没有面试日期的出现用帖子的发布日期（月）
   顶上，方便按时间归档（近似值，精确的发布日期留在来源上）。

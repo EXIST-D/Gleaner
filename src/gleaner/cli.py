@@ -532,8 +532,9 @@ def cmd_bundle(args) -> int:
     counts = result["counts"]
     text = [
         f"题目包 {output}",
-        f"{counts['questions']} 道题、{counts['occurrences']} 次出现、{counts['sources']} 个来源链接、{counts['companies']} 家公司"
-        "（没有图片和答案）",
+        f"{counts['questions'] - counts.get('merged_wordings', 0)} 道题（另有 {counts.get('merged_wordings', 0)} 条合并过的问法）、"
+        f"{counts['occurrences']} 次出现、"
+        f"{counts['sources']} 个来源链接、{counts['companies']} 家公司（没有图片和答案）",
         "导入另一个题库：ibank.py import-bundle --bank <目标题库> --input <这个文件> --dry-run，"
         "加 --fill-event-date month 用发布日期顶上没有的面试日期；看过报告再去掉 --dry-run，按 review sheet 做决定后 ingest finalize。",
     ]
